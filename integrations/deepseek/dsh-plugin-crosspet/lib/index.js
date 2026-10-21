@@ -5,7 +5,7 @@
 // - 每 1 分钟查一次余额（发消息、一轮结束时也查，30 秒内只查一次）（有 API Key 用 Key；没有就用 Harness 里登录的账号），写 <状态目录>/deepseek-quota.json
 // - 跟着 AI 出现：Harness 启动、新会话、发消息时，桌宠没开着就把它打开（用户从菜单退出后到 Harness 重开前不管；在设置 / 插件配置 autostart: false 里关掉了也不管）
 // 状态目录默认 /tmp/crosspet，可在插件配置里改 stateDir。插件只观察，不改变 DeepSeek 的任何行为。
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -96,6 +96,7 @@ export function apply(ctx, config = {}) {
       seenAt = Date.now();
       mkdir(dir, { recursive: true }).then(() => writeFile(join(dir, "seen-deepseek"), String(Math.floor(seenAt / 1000)))).catch(() => {});
     }
+    ledger(event, tool, "shown", `${character} ${pose}`);
     writeJson(`${character}-state.json`, { pose, event, tool, ts: Date.now() / 1000 }).catch((e) =>
       ctx.logger?.warn?.(`crosspet: 写状态失败 ${String(e)}`),
     );
@@ -105,6 +106,25 @@ export function apply(ctx, config = {}) {
   // 桌宠在跑时把自己的进程号写在 <状态目录>/pet.pid；从菜单手动退出时在数据目录写 user-quit（Harness 重开或重启电脑后作废），
   // 设置里关掉时写 ai-autostart-off。用独立进程打开（detached），Harness 退出时桌宠不会被一起关掉
   const appData = process.platform === "win32" ? data : join(homedir(), "Library", "Application Support", "CrossPet");
+
+  // ---- 事件记录（反馈「AI 干活时她没反应」用）：数据目录 events/deepseek.jsonl，格式和 crosspet-hook.py 一样（见 docs/架构.md「记录」）。
+  // 只记事件名、工具名、结果，不记消息和工具参数；只留最近 200 行。插件只有一个进程，按顺序排队写就行
+  const ledgerDir = join(config.dataDir || (process.env.CROSSPET_DATA_DIR ? data : appData), "events");
+  let ledgerChain = Promise.resolve();
+  function ledger(ev, tool, result, detail) {
+    const line = JSON.stringify({ t: Math.round(Date.now() / 10) / 100, ev, tool: String(tool || "").toLowerCase().slice(0, 60), sid: "", turn: false, result, detail });
+    const file = join(ledgerDir, `${ID}.jsonl`);
+    ledgerChain = ledgerChain.then(async () => {
+      await mkdir(ledgerDir, { recursive: true });
+      await appendFile(file, line + "\n");
+      const rows = (await readFile(file, "utf8")).split("\n").filter(Boolean);
+      if (rows.length > 240) {
+        const tmp = join(ledgerDir, `.${ID}.${process.pid}.tmp`);
+        await writeFile(tmp, rows.slice(-200).join("\n") + "\n");
+        await rename(tmp, file);
+      }
+    }).catch(() => {});   // 记录写不了不能影响插件本身
+  }
   let lastEnsure = 0;
   function noteAutostart(source, result) {  // 写进 <状态目录>/autostart.txt，排查「为什么没出来」用
     const at = new Date().toLocaleString("zh-CN", { hour12: false });

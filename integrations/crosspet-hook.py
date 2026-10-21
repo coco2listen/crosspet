@@ -14,6 +14,7 @@
 不影响 AI 本身的行为：一般不向 stdout 输出；Antigravity 要求回一个 JSON，就回空的 {}。
 用 /tmp 是因为有的 AI（比如 DeepSeek Harness）的钩子跑在沙箱里，只允许写 /tmp。
 """
+import hashlib
 import json
 import os
 import sys
@@ -27,6 +28,64 @@ default_data = Path(os.environ.get("CROSSPET_DATA_DIR") or str(Path(os.environ.g
 # 桌宠的数据目录（角色、退出记号）：设了 CROSSPET_DATA_DIR 就用它（测试也靠它），没设时 Windows 在 %LOCALAPPDATA%\CrossPet，macOS 在 Application Support
 app_data = default_data if (os.name == "nt" or os.environ.get("CROSSPET_DATA_DIR")) else Path.home() / "Library/Application Support/CrossPet"
 state_dir = Path(os.environ.get("CROSSPET_STATE_DIR") or (str(default_data / "state") if os.name == "nt" else "/tmp/crosspet"))
+
+# ---- 事件记录（反馈「AI 干活时她没反应」用）：数据目录 events/<接入名>.jsonl，每条事件一行，记处理结果 ----
+# 只记事件名、工具名、会话 id 的哈希前 6 位、有没有轮次号、结果（shown 演了 / dropped 被哪条规则丢了 / error 出错）。
+# 绝不记内容：prompt、工具参数和结果、AI 的回答、对话记录路径、工作目录。只留最近 200 行（超过 240 行时截回 200）。
+# 格式和 DeepSeek Harness 插件、Claude Code mod 写的一样，见 docs/架构.md「记录」
+LEDGER_KEEP, LEDGER_MAX = 200, 240
+ledger_info = {"ev": "", "tool": "", "sid": "", "turn": False}
+
+
+def integration_name(argv) -> str:
+    """接入名（和 integrate.py、反馈里「最近收到消息」用的一样）：钩子的第一个参数是角色 / 宿主名，不完全一样"""
+    host = argv[1] if len(argv) > 1 else "claude"
+    if host == "claude":
+        return "claude-hooks"
+    if host == "gpt":
+        return "codex"
+    if host == "gemini" and len(argv) > 2:   # Antigravity 多带一个事件名参数
+        return "antigravity"
+    return host
+
+
+def _lock(f) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+    except Exception:
+        pass
+
+
+def ledger(result: str, detail: str) -> None:
+    try:
+        d = app_data / "events"
+        d.mkdir(parents=True, exist_ok=True)
+        stem = integration_name(sys.argv)
+        path = d / f"{stem}.jsonl"
+        line = json.dumps({"t": round(time.time(), 2), **ledger_info, "result": result, "detail": detail}, ensure_ascii=False)
+        with open(d / f".{stem}.lock", "a+") as lock:   # 好几个钩子进程可能同时写：排队
+            _lock(lock)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            rows = path.read_text(encoding="utf-8").splitlines()
+            if len(rows) > LEDGER_MAX:
+                tmp = d / f".{stem}.{os.getpid()}.tmp"
+                tmp.write_text("\n".join(rows[-LEDGER_KEEP:]) + "\n", encoding="utf-8")
+                tmp.replace(path)
+            if os.name == "nt":
+                try:
+                    import msvcrt
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+    except Exception:
+        pass   # 记录写不了不能影响钩子本身
 
 # 跟着 AI 出现：开始干活（会话开始 / 发消息 / 调模型）时桌宠没开着就把它打开。
 # 用户从菜单手动退出过（user-quit）就先不管，直到这个 AI 程序关掉重开、或者重启电脑：
@@ -261,7 +320,24 @@ try:
 except Exception:
     event = None
 if not isinstance(event, dict):
+    ledger("dropped", "bad-json")
     sys.exit(0)
+
+_sid = str(event.get("session_id") or event.get("sessionId") or event.get("conversationId") or "")
+_call = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}
+ledger_info.update(ev=str(event.get("hook_event_name") or (sys.argv[2] if len(sys.argv) > 2 else ""))[:60],
+                   tool=str(event.get("tool_name") or _call.get("name", "")).lower()[:60],
+                   sid=hashlib.sha1(_sid.encode("utf-8")).hexdigest()[:6] if _sid else "",
+                   turn=bool(event.get("turn_id")))
+_prev_excepthook = sys.excepthook
+
+
+def _ledger_excepthook(kind, value, tb):
+    ledger("error", kind.__name__)
+    _prev_excepthook(kind, value, tb)
+
+
+sys.excepthook = _ledger_excepthook
 
 # 心跳：「最近一次收到这个 AI 的消息」，桌宠记下来，设置里能看出「接上了但从没收到过消息」，反馈里也带着。
 # 文件名按接入的是哪个 AI 分（Antigravity 和 Gemini CLI 都用 gemini 角色，Antigravity 多带一个事件名参数）
@@ -279,6 +355,7 @@ if character == "gpt":
         codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").resolve()
         cwd = Path(str(event.get("cwd") or "")).resolve() if event.get("cwd") else None
         if cwd and (cwd == codex_home or codex_home in cwd.parents):
+            ledger("dropped", "codex-memory")
             sys.exit(0)
     except (OSError, ValueError):
         pass
@@ -299,6 +376,7 @@ if character == "gpt" and "transcript_path" in event:
         if i + 1 < tries:
             time.sleep(0.1)
     else:
+        ledger("dropped", "codex-suggestion")
         sys.exit(0)
 
 # 多模型宿主（WorkBuddy、ZCode、Hermes Agent、Qwen Code）：事件里带当前模型名就按它选角色；认不出的模型（混元、Kimi、GLM……）
@@ -506,6 +584,7 @@ if turn_id and turn_sid:
     is_child = bool(event.get("agent_id"))
     try:
         if not turn_gate(sys.argv[1] if len(sys.argv) > 1 else "claude", turn_sid, turn_id, name, is_child):
+            ledger("dropped", "turn-finished")
             if arg_event:
                 print("{}")
             sys.exit(0)
@@ -731,6 +810,7 @@ if session_id and (pose or name == "SessionEnd"):
     except Exception:
         pass
 
+ledger("shown", f"{character} {pose}") if pose else ledger("dropped", "unknown-event")
 
 if name in LAUNCH_EVENTS:
     ensure_pet_logged(f"{character} {name}")

@@ -152,3 +152,12 @@ test('排查信息没收齐就发了：卡片里写明，不是静默发空卡',
   assert.match(body, /排查信息没来得及收齐/)
   assert.doesNotMatch(JSON.stringify(P.buildCard({ kind: 'action', target: 'codex', still: 'now', text: 'x', attach: true, facts: facts({}) })), /没来得及收齐/)
 })
+
+test('「其他」是说不清哪类时用的：每类都带一点，已接入的 AI 各附 10 条事件记录', () => {
+  const s = P.sectionsFor('other', '', facts())
+  for (const id of ['window', 'displays', 'front', 'hidden', 'page', 'settings', 'seen', 'events:codex', 'events:deepseek', 'petEvents', 'switches', 'install', 'log'])
+    assert.ok(s.includes(id), id)
+  const many = Array.from({ length: 50 }, (_, i) => JSON.stringify({ t: 1792571450 + i, ev: 'E' + i, tool: '', sid: '', turn: false, result: 'shown', detail: 'gpt idle' })).join('\n')
+  const body = JSON.stringify(P.buildCard({ kind: 'other', target: '', still: 'now', text: 'x', attach: true, facts: facts({ 'events:codex': many, seen: '{}' }) }))
+  assert.ok(body.includes('E49') && !body.includes('E39 '), '每家只附最近 10 条')
+})

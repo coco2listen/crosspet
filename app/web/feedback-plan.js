@@ -59,7 +59,8 @@
       case 'display': return ['dpi', 'displays', 'page', 'log']
       case 'update': return ['updateLog', 'install']
       case 'perf': return ['perf', 'settings', 'log']
-      case 'other': return ['window', 'settings', 'seen', 'log']
+      // 其他：说不清是哪类时用，每类都带一点（体积由 buildCard 的缩减兜着）
+      case 'other': return ['window', 'displays', 'front', 'hidden', 'page', 'settings', 'seen', ...(facts?.integrations || []).map(i => 'events:' + i), 'petEvents', 'switches', 'install', 'log']
       default: return []
     }
   }
@@ -124,7 +125,7 @@
     if (id === 'page') return formatPage(raw, n.ledger)
     if (id === 'switches') return formatSwitches(raw, n.ledger)
     if (id === 'petEvents') return formatLedger(raw, n.ledger, '没有记录')
-    if (id.startsWith('events:')) return formatLedger(raw, target === 'unsure' ? Math.min(10, n.ledger) : n.ledger, emptyEvents(id.slice(7), sections.seen))
+    if (id.startsWith('events:')) return formatLedger(raw, target === 'unsure' || kind === 'other' ? Math.min(10, n.ledger) : n.ledger, emptyEvents(id.slice(7), sections.seen))
     return String(raw).slice(0, n.text)
   }
   function title(id) {

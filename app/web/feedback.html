@@ -140,7 +140,8 @@ function renderPreview() {
   $('preview').textContent = lines.join('\n')
 }
 function setFacts(f) {
-  facts = { ...facts, ...f, sections: { ...(f.sections || {}) } }
+  // 只更新开头 / 选项的那次（sections 为空）不能把已经收集到的段落冲掉
+  facts = { ...facts, ...f, sections: f.sections && Object.keys(f.sections).length ? { ...f.sections } : facts.sections }
   refresh()
   if (pendingSend) { clearTimeout(pendingSend); pendingSend = null; doSend() }
 }

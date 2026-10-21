@@ -100,7 +100,7 @@ extension App {
             let healed = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
             guard !healed.isEmpty else { return }
             self.healTimes.append(Date())
-            NSLog("CrossPet: 接回被冲掉的接入 \(healed)")
+            appLog("接回被冲掉的接入 \(healed)")
             self.js("configHealed()")
             self.refreshIntegrated()
         }
@@ -223,7 +223,7 @@ extension App {
             case "login":
                 if (value as? Bool ?? false) != (SMAppService.mainApp.status == .enabled) { toggleLogin() }
             case "character":
-                if let id = value as? String, characterIds.contains(id) { switchTo(id) }
+                if let id = value as? String, characterIds.contains(id) { switchTo(id, why: "manual", via: "settings") }
             default: break
             }
             pushSettings()
@@ -232,7 +232,7 @@ extension App {
         case "skin":   // 换衣服：记下来，重新载入立绘；正在显示的就是她的话马上换上
             guard let id = msg["id"] as? String, characterIds.contains(id), let skin = msg["skin"] as? String else { return }
             wear(id, skin)
-            switchTo(id)
+            switchTo(id, why: "skin", via: skin)
             pushSettings()
         case "rename":
             guard let id = msg["id"] as? String, characterIds.contains(id) else { return }

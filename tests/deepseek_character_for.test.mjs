@@ -13,7 +13,7 @@ async function hostCharacterFor(provider, model, config = {}) {
   const handlers = {}, effects = []
   const ctx = { on(n, f) { (handlers[n] ||= []).push(f) }, inject() { throw new Error('none') }, effect(f) { effects.push(f) },
     logger: { warn() {} }, credentials: { resolve: async () => ({ value: 'sk-test' }) } }
-  apply(ctx, { stateDir, autostart: false, ...config })
+  apply(ctx, { stateDir, dataDir: stateDir, autostart: false, ...config })   // dataDir：事件记录也写进临时目录，别写到真实的数据目录
   for (const h of handlers['session/event'] || []) h({ requestContext: () => ({ provider, model }) }, {})
   await new Promise((r) => setTimeout(r, 50))
   effects.map((f) => f()).forEach((s) => typeof s === 'function' && s())

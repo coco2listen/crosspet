@@ -20,7 +20,7 @@ extension App {
                       let stamp = attrs[.modificationDate] as? Date, stamp != stamps[key] else { continue }
                 stamps[key] = stamp
                 // 状态只认 10 分钟内的，免得开机读到旧状态
-                if kind == "state", Date().timeIntervalSince(stamp) > 600 { continue }
+                if kind == "state", Date().timeIntervalSince(stamp) > 600 { notePet(id, nil, "skipped", "stale"); continue }
                 guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { continue }
                 if kind == "state", let state = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let pose = state["pose"] as? String {
@@ -33,7 +33,9 @@ extension App {
                 }
                 if kind == "sessions" { if !pauseRealEvents { js("setSessions(\(quote(id)), \(text))") }; continue }
                 devJS("logEvent(\(quote(id)), \(quote(kind)), \(text), \(pauseRealEvents))")
-                if pauseRealEvents { continue }
+                let parsed = kind == "state" ? (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] : nil
+                if pauseRealEvents { if kind == "state" { notePet(id, parsed, "skipped", "paused") }; continue }
+                if kind == "state" { notePet(id, parsed, "played") }   // 交给网页了；网页自己的判断（不是当前角色、正在演彩蛋……）在 diagnoseDisplay 里
                 js(kind == "state" ? "applyCharState(\(quote(id)), \(text))" : "setQuota(\(quote(id)), \(text))")
                 // Codex 回完一轮：额度记录刚写进会话，马上读一次（不然要等每分钟一次的定时刷新）
                 if kind == "state", id == "gpt" {
@@ -57,7 +59,7 @@ extension App {
             guard followApps, !pauseRealEvents, let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                   (appToCharacter[front] ?? hostApp(front)) == host else { continue }
             let id = hostCharacter(host)
-            if id != currentId, characterIds.contains(id) { switchTo(id) }
+            if id != currentId, characterIds.contains(id) { switchTo(id, why: "host", via: host) }
         }
     }
 
@@ -72,11 +74,13 @@ extension App {
         guard let data = try? JSONSerialization.data(withJSONObject: input), let json = String(data: data, encoding: .utf8) else { return }
         web.evaluateJavaScript("FollowPolicy.eventTarget(\(json))") { [weak self] result, _ in
             // 和 Windows 一致：前台、设置或手动选择变了就丢弃旧答复。
-            guard let self, self.ready, !self.pauseRealEvents, self.currentId == currentAt,
+            guard let self else { return }
+            guard self.ready, !self.pauseRealEvents, self.currentId == currentAt,
                   NSWorkspace.shared.frontmostApplication?.bundleIdentifier == front,
-                  self.followApps == apps, self.followEvents == events,
-                  result as? String == id, id != self.currentId else { return }
-            self.switchTo(id)
+                  self.followApps == apps, self.followEvents == events else { self.notePet(id, nil, "skipped", "answer-stale"); return }
+            guard result as? String == id else { self.notePet(id, nil, "skipped", "front-ai"); return }
+            guard id != self.currentId else { return }
+            self.switchTo(id, why: "event")
         }
     }
 

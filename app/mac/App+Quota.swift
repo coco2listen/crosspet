@@ -48,6 +48,7 @@ extension App {
         guard defaults.bool(forKey: "gptQuota") else { return }   // 查的途中关掉了额度显示
         if let rl = rateLimits { codexLast = (rl, Date()); codexNote = "" }
         else if codexLast == nil { codexNote = "问不到 Codex：\(error ?? "原因不明")" }
+        if rateLimits == nil { appLog("GPT 额度查询失败：\(error ?? "原因不明")") }
         let tag = rateLimits != nil ? "Codex 服务，\(String(format: "%.1f", Double(ms) / 1000)) 秒" : "没问到：\(error ?? "原因不明")"
         lastGptQuota = "\(Self.clock()) （\(tag)）" + (codexLast.map { (rateLimits == nil ? "沿用 \(Self.hm($0.at)) 的数：" : "") + CodexQuotaSource.brief($0.rateLimits) } ?? "")
         pushSettings()
@@ -68,10 +69,11 @@ extension App {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             guard let (pid, token) = self.antigravityServer() else {
-                DispatchQueue.main.async { self.js("setQuota('gemini', null)") }
+                DispatchQueue.main.async { self.js("setQuota('gemini', null)"); self.lastAgyNote = "\(Self.clock()) 没找到 Antigravity 的服务进程" }
                 return
             }
             let ports = self.agyPort?.pid == pid ? [self.agyPort!.port] : self.listeningPorts(pid)
+            DispatchQueue.main.async { self.lastAgyNote = "\(Self.clock()) 找到服务进程，监听端口 \(ports.count) 个" }
             self.askAntigravity(pid: pid, token: token, ports: ports)
         }
     }

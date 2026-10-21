@@ -13,7 +13,8 @@ async function run(config) {
   const handlers = {}, effects = []
   const ctx = { on(n, f) { (handlers[n] ||= []).push(f) }, inject() { throw new Error('none') }, effect(f) { effects.push(f) }, logger: { warn() {} },
     credentials: { resolve: async () => ({ value: 'sk-test' }) } }
-  apply(ctx, { stateDir: mkdtempSync(join(tmpdir(), 'crosspet-dsh-')), autostart: false, ...config })
+  const tmp = mkdtempSync(join(tmpdir(), 'crosspet-dsh-'))
+  apply(ctx, { stateDir: tmp, dataDir: tmp, autostart: false, ...config })   // dataDir：事件记录也写进临时目录，别写到真实的数据目录
   const stops = effects.map((f) => f())
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const fire = async (n, ...a) => { for (const h of handlers[n] || []) await h(...a, async () => {}); await wait(50) }
@@ -39,7 +40,8 @@ async function timed(config, ms) {
   const effects = []
   const ctx = { on() {}, inject() { throw new Error('none') }, effect(f) { effects.push(f) }, logger: { warn() {} },
     credentials: { resolve: async () => ({ value: 'sk-test' }) } }
-  apply(ctx, { stateDir: mkdtempSync(join(tmpdir(), 'crosspet-dsh-')), autostart: false, ...config })
+  const tmp = mkdtempSync(join(tmpdir(), 'crosspet-dsh-'))
+  apply(ctx, { stateDir: tmp, dataDir: tmp, autostart: false, ...config })   // dataDir：事件记录也写进临时目录，别写到真实的数据目录
   const stops = effects.map((f) => f())
   await new Promise((r) => setTimeout(r, ms))
   stops.forEach((s) => typeof s === 'function' && s())

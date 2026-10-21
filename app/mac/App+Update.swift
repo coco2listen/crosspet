@@ -237,7 +237,7 @@ extension App {
         refreshPlugins(tellPet: true)   // 插件旧了：等她闲下来提醒一句
         if followApps, let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
            let id = appToCharacter[front] ?? hostApp(front), characterIds.contains(hostCharacter(id)) {
-            switchTo(hostCharacter(id))
+            switchTo(hostCharacter(id), why: "startup", via: front)
         }
     }
 

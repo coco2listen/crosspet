@@ -47,6 +47,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var codexLast: (rateLimits: [String: Any], at: Date)?   // 最后一次问到的额度：问不到时接着显示它，并标上时间
     var codexNote = ""                       // 从没问到过时的原因，设置里那个开关下面显示
     var lastGptQuota = "还没读过"
+    var lastAgyNote = "还没查过"   // 最近一次找 Antigravity 服务的结果（反馈「额度不对」用）
 
     // Gemini 额度 用的
     var agySession: URLSession?
@@ -82,7 +83,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var hitRects: [CGRect] = []
     var hitRectsAt = Date.distantPast
     var hiddenForFullscreen = false {
-        didSet { if hiddenForFullscreen != oldValue { applyHiddenState() } }   // 透明度 / 鼠标 / 动画都跟着这个标记走
+        didSet {   // 透明度 / 鼠标 / 动画都跟着这个标记走
+            guard hiddenForFullscreen != oldValue else { return }
+            appLog(hiddenForFullscreen ? "全屏中，先藏起来（前台 \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-")）" : "退出全屏，出来了")
+            applyHiddenState()
+        }
     }
     var fullscreenCheckedAt = Date.distantPast
     var fullscreenOverride = false   // 全屏时你点菜单栏图标叫她出来：切换空间 / 前台程序之前不再收起来
@@ -120,6 +125,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         syncBundledResources()
         markLaunched()
+        try? FileManager.default.createDirectory(at: eventsDir, withIntermediateDirectories: true)   // 钩子 / 插件的事件记录写在这里（见 App+Log）
+        appLog("启动 \(currentVersion)，macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
 
         let size = NSSize(width: Self.baseSize.width * petScale, height: Self.baseSize.height * petScale)
         var origin = NSPoint.zero

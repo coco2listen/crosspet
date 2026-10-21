@@ -93,7 +93,11 @@ extension App {
         }
     }
 
-    func switchTo(_ id: String) {
+    /// why：为什么换（front 跟随前台 / event 跟随事件 / host 按模型 / manual 菜单或设置 / startup / skin 换衣服），记进换角色记录（反馈「角色换得不对」用）
+    func switchTo(_ id: String, why: String, via: String = "") {
+        let skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        Ledger.append(switchesURL, ["from": currentId ?? "", "to": id, "skin": skins[id] ?? "", "why": why, "via": via])
+        if id != currentId { appLog("换角色 \(currentId ?? "-") → \(id)（\(why)\(via.isEmpty ? "" : " " + via)）") }
         currentId = id
         defaults.set(id, forKey: "character")   // 重启后恢复（didFinish 里）；Windows 的 SwitchTo 也是这么记的
         if dock != nil, !dockOut { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.applyDock() } }   // 换了角色，切口位置跟着变
@@ -143,7 +147,7 @@ extension App {
         guard id != currentId, characterIds.contains(id) else { return }
         let work = DispatchWorkItem { [weak self] in
             guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundle else { return }
-            self?.switchTo(id)
+            self?.switchTo(id, why: "front", via: bundle)
         }
         pendingSwitch = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)

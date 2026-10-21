@@ -189,7 +189,7 @@ namespace CrossPet
                     RefreshQuota();
                     RefreshCodexQuota(CodexWhy.Now);
                     RefreshPlugins(tellPet: true);   // 插件旧了：等她闲下来提醒一句
-                    FollowForeground();
+                    FollowForeground("startup");
                 };
                 // 立绘加载失败时网页发消息过来：记进日志（每次启动最多 5 条），反馈里能看出是哪张图、为什么
                 core.WebMessageReceived += (_, a) =>

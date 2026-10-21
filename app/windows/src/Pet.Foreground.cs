@@ -22,7 +22,8 @@ namespace CrossPet
     sealed partial class Pet
     {
 
-        void FollowForeground()
+        /// <summary>why：记进换角色记录的原因（front 切了前台 / host 前台程序换了模型 / startup 刚启动），和 macOS 一致</summary>
+        void FollowForeground(string why = "front")
         {
             var exe = Native.ForegroundExe();
             var map = Store.ReadJson(Store.AppMap);
@@ -33,7 +34,7 @@ namespace CrossPet
             if (!ready || Paused || !Store.Flag("followApps") || exe == "") return;
             if (string.IsNullOrWhiteSpace(match)) return;   // 对照表里没有，或者值留空：这个程序不跟随
             match = HostCharacter(match);
-            if (match != current) SwitchTo(match, "front", exe);
+            if (match != current) SwitchTo(match, why, exe);
         }
 
         async Task FollowEvent(string id)

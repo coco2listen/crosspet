@@ -43,3 +43,9 @@ test('版本号按数字比，不按字符串（1.3.10 比 1.3.9 新）', () => 
 test('自带的版本读不到：不提醒（免得乱报）', () => {
   assert.equal(advice(p('1.3.4', '1.3.4', null)), null)
 })
+
+test('随包的插件比 1.3.8-beta.1 里那版（1.3.8，没有事件记录）新：装过 beta.1 的人会被提醒更新', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../integrations/deepseek/dsh-plugin-crosspet/lib/index.js'), 'utf8')
+  const bundled = src.match(/PLUGIN_VERSION = "([^"]+)"/)[1]
+  assert.equal(advice(p('1.3.8', '1.3.8', bundled)).kind, 'update')
+})

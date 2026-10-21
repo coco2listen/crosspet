@@ -10,8 +10,9 @@ enum Ledger {
               let text = String(data: data, encoding: .utf8) else { return }
         let fm = FileManager.default
         try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // 用会抛 Swift 错误的接口：老的 seekToEndOfFile / write(_:) 出错（磁盘满、没权限）时抛 ObjC 异常，整个桌宠会闪退
         if let h = try? FileHandle(forWritingTo: url) {
-            h.seekToEndOfFile(); h.write(Data((text + "\n").utf8)); try? h.close()
+            _ = try? h.seekToEnd(); try? h.write(contentsOf: Data((text + "\n").utf8)); try? h.close()
         } else {
             try? Data((text + "\n").utf8).write(to: url)
         }

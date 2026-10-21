@@ -63,7 +63,7 @@ extension App {
     }
 
     /// 反馈窗口第一步就要的：开头、第二步的选项（已接入的 AI、角色、打开了的额度）；sections 是这一类要附的段落（见 web/feedback-plan.js）
-    func feedbackFacts(_ sections: [String: String]) -> [String: Any] {
+    func feedbackFacts(_ sections: [String: String], key: String? = nil) -> [String: Any] {
         var arch = "arm64"
         #if arch(x86_64)
         arch = "x86_64"
@@ -73,15 +73,14 @@ extension App {
         if defaults.bool(forKey: "gptQuota") { quotas.append("gpt") }
         if defaults.bool(forKey: "agyQuota") { quotas.append("gemini") }
         if dsQuotaEnabled { quotas.append("deepseek") }
-        return [
-            "header": ["version": currentVersion, "platform": "mac", "os": "macOS \(ProcessInfo.processInfo.operatingSystemVersionString) \(arch)",
-                       "install": installId, "character": currentId ?? "", "skin": skins[currentId ?? ""] ?? "",
-                       "uptimeMin": Int(Date().timeIntervalSince(launchedAt) / 60)],
-            "integrations": integrated ?? [],
-            "characters": characterIds.map { ["id": $0, "name": displayNames[$0] ?? $0] },
-            "quotas": quotas,
-            "sections": sections.mapValues { Self.redact($0) },
-        ]
+        let header: [String: Any] = ["version": currentVersion, "platform": "mac", "os": "macOS \(ProcessInfo.processInfo.operatingSystemVersionString) \(arch)",
+                                     "install": installId, "character": currentId ?? "", "skin": skins[currentId ?? ""] ?? "",
+                                     "uptimeMin": Int(Date().timeIntervalSince(launchedAt) / 60)]
+        let characters: [[String: String]] = characterIds.map { ["id": $0, "name": displayNames[$0] ?? $0] }
+        var facts: [String: Any] = ["header": header, "integrations": integrated ?? [], "characters": characters, "quotas": quotas,
+                                    "sections": sections.mapValues { Self.redact($0) }]
+        if let key { facts["key"] = key }   // 收集的结果带回 collect 时的 key，页面据此丢掉上一类迟到的结果
+        return facts
     }
 
     static func clock(from d: Date = Date()) -> String { let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"; return f.string(from: d) }
@@ -147,20 +146,26 @@ extension App {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish("网页没有回应") }
             case "diag":
                 if diagText.isEmpty, pythonReady, integrateScript != nil {
+                    // 诊断要跑 python，卡住的话整份反馈都等不来：最多等 3 秒，到点先写「诊断超时」
                     group.enter()
+                    var answered = false
+                    let finish = { (text: String) in if !answered { answered = true; out["diag"] = text; group.leave() } }
                     runIntegrate(["diagnose"]) { [weak self] text, _ in
                         DispatchQueue.main.async {
                             self?.diagText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            out["diag"] = self?.diagText ?? ""; group.leave()
+                            finish(self?.diagText ?? "")
                         }
                     }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish("诊断超时（3 秒内没跑完）") }
                 } else { out[id] = diagText }
             default:
                 if id.hasPrefix("events:") { out[id] = Ledger.tail(eventsDir.appendingPathComponent("\(id.dropFirst(7)).jsonl"), 200) }
                 else if id.hasPrefix("state:") {
-                    let c = String(id.dropFirst(6))
+                    // state:<角色>|<宿主>：状态、多会话按角色记；轮次、按模型换角色按宿主名记（见 web/feedback-plan.js）
+                    let parts = id.dropFirst(6).split(separator: "|").map(String.init)
+                    let c = parts.first ?? "", host = parts.count > 1 ? parts[1] : c
                     out[id] = ["state", "sessions", "turns", "host"].compactMap { kind -> String? in
-                        let t = file(stateDir.appendingPathComponent("\(c)-\(kind).json")).trimmingCharacters(in: .whitespacesAndNewlines)
+                        let t = file(stateDir.appendingPathComponent("\(kind == "turns" || kind == "host" ? host : c)-\(kind).json")).trimmingCharacters(in: .whitespacesAndNewlines)
                         return t.isEmpty ? nil : "\(kind)：\(String(t.prefix(800)))"
                     }.joined(separator: "\n")
                 }
@@ -207,8 +212,8 @@ extension App {
         return "\(screens.count) 块：" + parts.joined(separator: "、") + "；" + flags.joined(separator: "，")
     }
 
-    func pushFacts(_ sections: [String: String]) {
-        guard let v = feedbackWeb, let data = try? JSONSerialization.data(withJSONObject: feedbackFacts(sections)),
+    func pushFacts(_ sections: [String: String], key: String? = nil) {
+        guard let v = feedbackWeb, let data = try? JSONSerialization.data(withJSONObject: feedbackFacts(sections, key: key)),
               let text = String(data: data, encoding: .utf8) else { return }
         v.evaluateJavaScript("setFacts(\(text))", completionHandler: nil)
     }
@@ -247,8 +252,8 @@ extension App {
                 else { done(false, "没发出去（\(code)），稍后再试试") }
             }.resume()
         case "collect":   // 选好了类型（和补选）：按 web/feedback-plan.js 给的段落清单收集
-            let want = msg["want"] as? [String] ?? []
-            collectFeedback(want) { [weak self] sections in self?.pushFacts(sections) }
+            let want = msg["want"] as? [String] ?? [], key = msg["key"] as? String ?? ""
+            collectFeedback(want) { [weak self] sections in self?.pushFacts(sections, key: key) }
         default:   // get：反馈窗口刚打开，先给开头和第二步的选项
             pushFacts([:])
             diagText = ""   // 每次打开反馈都重新诊断一次（要用时再跑）

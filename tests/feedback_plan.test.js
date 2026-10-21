@@ -35,7 +35,7 @@ test('九个类型，文案和顺序照设计', () => {
 
 test('每类附的段：AI 没反应附这一家的记录，不附更新日志和角色表；更新失败才附更新日志；建议什么都不附', () => {
   const a = P.sectionsFor('action', 'codex')
-  for (const id of ['events:codex', 'petEvents', 'state:gpt', 'diag', 'seen', 'page']) assert.ok(a.includes(id), id)
+  for (const id of ['events:codex', 'petEvents', 'state:gpt|gpt', 'diag', 'seen', 'page']) assert.ok(a.includes(id), id)
   for (const id of ['updateLog', 'characters']) assert.ok(!a.includes(id), id)
   assert.ok(P.sectionsFor('update').includes('updateLog'))
   assert.ok(!P.sectionsFor('gone').includes('updateLog'))
@@ -115,4 +115,40 @@ test('卡片标题写类型和补选；「AI 没反应」带上那一家的事�
   const body = JSON.stringify(card)
   assert.ok(body.includes('Stop  → shown gpt happy') || body.includes('Stop → shown gpt happy'), body.slice(0, 2000))
   assert.ok(body.includes('更早'))
+})
+
+// ---- 审查修复 ----
+test('诊断特别长也不超过 19000 字节（飞书会拒收，用户发不出去）', () => {
+  const diag = '[Codex] ' + '很长的诊断内容'.repeat(3000)
+  const card = P.buildCard({ kind: 'action', target: 'codex', still: 'now', text: '没反应', attach: true, facts: facts({ diag, page: 'x'.repeat(30000) }) })
+  assert.ok(Buffer.byteLength(JSON.stringify(card)) <= 19000)
+  assert.ok(JSON.stringify(card).includes('没反应'))
+})
+
+test('WorkBuddy 的诊断：带方括号的那几行也切出来', () => {
+  const d = DIAG + '\n[WorkBuddy] 钩子 已装\n  最近消息 3 分钟前\n[ZCode] x'
+  const w = P.sliceDiag(d, 'workbuddy')
+  assert.match(w, /\[WorkBuddy\] 钩子 已装/)
+  assert.match(w, /最近消息 3 分钟前/)
+  assert.doesNotMatch(w, /\[ZCode\]/)
+})
+
+test('多模型宿主的状态段：状态按角色、轮次和换模型记录按宿主名', () => {
+  assert.ok(P.sectionsFor('action', 'workbuddy').includes('state:current|workbuddy'))
+  assert.ok(P.sectionsFor('action', 'codex').includes('state:gpt|gpt'))
+  assert.ok(P.sectionsFor('action', 'zcode').includes('state:glm|zcode'))
+  assert.ok(P.sectionsFor('action', 'claude-hooks').includes('state:claude|claude'))
+})
+
+test('没有记录时分清：收到过消息却没记录 / 从没收到 / 桌宠自己没记录', () => {
+  const card = s => JSON.stringify(P.buildCard({ kind: 'action', target: 'codex', still: 'now', text: 'x', attach: true, facts: facts(s) }))
+  assert.match(card({ 'events:codex': '', seen: JSON.stringify({ codex: Date.now() / 1000 - 60 }) }), /收到过消息却没有记录/)
+  assert.match(card({ 'events:codex': '', seen: JSON.stringify({ codex: 0 }) }), /从没收到/)
+  assert.doesNotMatch(card({ petEvents: '' }), /插件版本/)
+})
+
+test('排查信息没收齐就发了：卡片里写明，不是静默发空卡', () => {
+  const body = JSON.stringify(P.buildCard({ kind: 'action', target: 'codex', still: 'now', text: 'x', attach: true, partial: true, facts: facts({}) }))
+  assert.match(body, /排查信息没来得及收齐/)
+  assert.doesNotMatch(JSON.stringify(P.buildCard({ kind: 'action', target: 'codex', still: 'now', text: 'x', attach: true, facts: facts({}) })), /没来得及收齐/)
 })

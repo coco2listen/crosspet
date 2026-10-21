@@ -82,7 +82,7 @@ namespace CrossPet
                 }
                 catch { }
             }
-            if (hostChanged) FollowForeground();
+            if (hostChanged) FollowForeground("host");
             var latestActive = (id: (string)null, ts: 0.0);
             // current：多模型宿主（WorkBuddy）里没有对应角色的模型，由当前角色来演；它只有状态，没有额度
             foreach (var id in Characters().Select(c => c.id).Concat(new[] { "current" }))

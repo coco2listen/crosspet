@@ -13,7 +13,7 @@ extension App {
         Self.logQueue.async {
             let url = Self.logURL, fm = FileManager.default
             if let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size > 1_000_000 { try? fm.removeItem(at: url) }
-            if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+            if let h = try? FileHandle(forWritingTo: url) { _ = try? h.seekToEnd(); try? h.write(contentsOf: Data(line.utf8)); try? h.close() }   // 出错不抛 ObjC 异常（见 Ledger）
             else { try? Data(line.utf8).write(to: url) }
         }
     }

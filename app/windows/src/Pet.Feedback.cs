@@ -65,7 +65,7 @@ namespace CrossPet
                 ["pose"] = state != null && state.TryGetValue("pose", out var p) ? p as string ?? "" : "", ["result"] = result, ["detail"] = detail });
 
         /// <summary>反馈窗口第一步就要的：开头、第二步的选项（已接入的 AI、角色、打开了的额度）；sections 是这一类要附的段落（见 web/feedback-plan.js）</summary>
-        Dictionary<string, object> FeedbackFacts(Dictionary<string, string> sections)
+        Dictionary<string, object> FeedbackFacts(Dictionary<string, string> sections, string key = null)
         {
             var skin = Store.Skins != null && current != null && Store.Skins.TryGetValue(current, out var w) ? w as string ?? "" : "";
             var quotas = new List<string>();
@@ -81,9 +81,10 @@ namespace CrossPet
                 ["characters"] = Characters().Select(c => new Dictionary<string, object> { ["id"] = c.id, ["name"] = c.name }).ToList(),
                 ["quotas"] = quotas,
                 ["sections"] = sections.ToDictionary(kv => kv.Key, kv => (object)Redact(kv.Value)),
+                ["key"] = key,   // 收集的结果带回 collect 时的 key，页面据此丢掉上一类迟到的结果
             };
         }
-        void PushFacts(Dictionary<string, string> sections) => feedback?.Run($"setFacts({Store.Json.Serialize(FeedbackFacts(sections))})");
+        void PushFacts(Dictionary<string, string> sections, string key = null) => feedback?.Run($"setFacts({Store.Json.Serialize(FeedbackFacts(sections, key))})");
 
         string lastUpdateCheck = "还没查过", diagText = "";
         readonly DateTime launchedAt = DateTime.Now;
@@ -147,15 +148,22 @@ namespace CrossPet
                             o[id] = Store.Json.DeserializeObject(raw) as string ?? "网页没有回应";
                             break;
                         case "diag":
-                            if (diagText == "" && File.Exists(Store.Python)) diagText = (await Task.Run(() => RunIntegrate("diagnose"))).Item1.Trim();
-                            o[id] = diagText;
+                            // 诊断要跑 python，卡住的话整份反馈都等不来：最多等 3 秒，到点先写「诊断超时」（跑完的结果留着下次用）
+                            if (diagText == "" && File.Exists(Store.Python))
+                            {
+                                var run = Task.Run(() => { var t = RunIntegrate("diagnose").Item1.Trim(); diagText = t; return t; });
+                                o[id] = await Task.WhenAny(run, Task.Delay(3000)) == run ? run.Result : "诊断超时（3 秒内没跑完）";
+                            }
+                            else o[id] = diagText;
                             break;
                         default:
                             if (id.StartsWith("events:")) o[id] = Ledger.Tail(Path.Combine(EventsDir, id.Substring(7) + ".jsonl"), 200);
                             else if (id.StartsWith("state:"))
                             {
-                                var c = id.Substring(6);
-                                o[id] = string.Join("\n", new[] { "state", "sessions", "turns", "host" }.Select(k => (k, t: Read(Path.Combine(Store.State, $"{c}-{k}.json")).Trim()))
+                                // state:<角色>|<宿主>：状态、多会话按角色记；轮次、按模型换角色按宿主名记（见 web/feedback-plan.js）
+                                var parts = id.Substring(6).Split('|');
+                                var c = parts[0]; var host = parts.Length > 1 ? parts[1] : c;
+                                o[id] = string.Join("\n", new[] { "state", "sessions", "turns", "host" }.Select(k => (k, t: Read(Path.Combine(Store.State, $"{(k == "turns" || k == "host" ? host : c)}-{k}.json")).Trim()))
                                     .Where(x => x.t != "").Select(x => $"{x.k}：{(x.t.Length > 800 ? x.t.Substring(0, 800) : x.t)}"));
                             }
                             break;
@@ -220,7 +228,12 @@ namespace CrossPet
             if (cmd == "collect")   // 选好了类型（和补选）：按 web/feedback-plan.js 给的段落清单收集
             {
                 var want = (msg.TryGetValue("want", out var wv) ? wv as object[] : null)?.OfType<string>().ToList() ?? new List<string>();
-                _ = Window.Dispatcher.InvokeAsync(async () => PushFacts(await CollectFeedback(want)));
+                var key = msg.TryGetValue("key", out var kv) ? kv as string : null;
+                _ = Window.Dispatcher.InvokeAsync(async () =>
+                {
+                    try { PushFacts(await CollectFeedback(want), key); }
+                    catch (Exception e) { Store.Log("收集反馈信息出错: " + e); }   // 不然异常进了没人看的 Task，什么痕迹都不留
+                });
                 return;
             }
             if (cmd != "send")   // get：反馈窗口刚打开，先给开头和第二步的选项

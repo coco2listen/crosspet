@@ -70,14 +70,15 @@ body.sent .done { display: block; }
 <script src="feedback-plan.js"></script>
 <script>
 // 和宿主（macOS 的 WKWebView / Windows 的 WebView2）通信：
-//   页面 → 外壳：{cmd:'get'}（打开时）；{cmd:'collect', kind, target, want}（选好类型和补选时，want 是要收集的段落 id）；{cmd:'send', body}
-//   外壳 → 页面：setFacts(facts)（形状见 feedback-plan.js）；onSent(ok, message)
+//   页面 → 外壳：{cmd:'get'}（打开时）；{cmd:'collect', kind, target, want, key}（选好类型和补选时，want 是要收集的段落 id）；{cmd:'send', body}
+//   外壳 → 页面：setFacts(facts)（形状见 feedback-plan.js；收集的结果带回 collect 时的 key）；onSent(ok, message)
+//   key 防串：换了类型后，上一类迟到的结果不能当成这一类的发出去
 // 选哪些段、怎么排、超长怎么缩都在 feedback-plan.js（设计见 docs/superpowers/specs/2026-10-21-feedback-redesign-design.md）
 const post = msg => window.chrome?.webview ? window.chrome.webview.postMessage(msg) : window.webkit?.messageHandlers?.feedback?.postMessage(msg)
 const $ = id => document.getElementById(id)
 const P = window.FeedbackPlan
 let facts = { header: {}, integrations: [], characters: [], quotas: [], sections: {} }
-let kind = null, target = null, still = null, collectedFor = null, sending = false, pendingSend = null
+let kind = null, target = null, still = null, collectedFor = null, receivedFor = null, sending = false, pendingSend = null
 
 const kindOf = () => P.KINDS.find(k => k.id === kind)
 const key = () => `${kind}|${target || ''}`
@@ -121,11 +122,12 @@ function refresh() {
 }
 function collect() {
   if (!kindOf()) return
-  collectedFor = key()
-  post({ cmd: 'collect', kind, target: target || '', want: P.sectionsFor(kind, target || '', facts) })
+  collectedFor = key(); receivedFor = null
+  facts.sections = {}   // 上一类的段落作废
+  post({ cmd: 'collect', kind, target: target || '', want: P.sectionsFor(kind, target || '', facts), key: collectedFor })
 }
-function card() {
-  return P.buildCard({ kind, target: target || '', still, text: $('text').value.trim(), attach: $('attach').checked, facts })
+function card(partial) {
+  return P.buildCard({ kind, target: target || '', still, text: $('text').value.trim(), attach: $('attach').checked, facts, partial })
 }
 // 预览：把卡片摊成纯文本，和真正发出去的一样
 function renderPreview() {
@@ -140,12 +142,14 @@ function renderPreview() {
   $('preview').textContent = lines.join('\n')
 }
 function setFacts(f) {
-  // 只更新开头 / 选项的那次（sections 为空）不能把已经收集到的段落冲掉
-  facts = { ...facts, ...f, sections: f.sections && Object.keys(f.sections).length ? { ...f.sections } : facts.sections }
+  // 只更新开头 / 选项的那次（不带 key）不动已经收到的段落；收集的结果只认当前这一类的
+  const mine = f.key != null && f.key === key()
+  facts = { ...facts, ...f, sections: mine ? { ...(f.sections || {}) } : facts.sections }
+  if (mine) receivedFor = f.key
   refresh()
-  if (pendingSend) { clearTimeout(pendingSend); pendingSend = null; doSend() }
+  if (pendingSend && mine) { clearTimeout(pendingSend); pendingSend = null; doSend() }
 }
-function doSend() { post({ cmd: 'send', body: JSON.stringify(card()) }) }
+function doSend(partial) { post({ cmd: 'send', body: JSON.stringify(card(partial)) }) }
 function onSent(ok, message) {
   sending = false
   if (ok) { document.body.classList.add('sent'); return }
@@ -162,9 +166,10 @@ $('peek').onclick = e => { e.preventDefault(); $('preview').classList.toggle('hi
 $('send').onclick = () => {
   sending = true; refresh()
   $('msg').textContent = '正在发送…'; $('msg').classList.remove('err')
-  // 刚选完、外壳还没把这一类的信息交回来：再要一次，最多等 5 秒，收到就发
-  if ($('attach').checked && !Object.keys(facts.sections || {}).length) {
-    collect(); pendingSend = setTimeout(() => { pendingSend = null; doSend() }, 5000); return
+  // 外壳还没把这一类的信息交回来：等它，最多 8 秒；到点就照发，卡片里写明没收齐
+  if ($('attach').checked && receivedFor !== key()) {
+    if (collectedFor !== key()) collect()
+    pendingSend = setTimeout(() => { pendingSend = null; doSend(true) }, 8000); return
   }
   doSend()
 }

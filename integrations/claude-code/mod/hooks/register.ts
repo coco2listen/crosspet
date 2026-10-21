@@ -77,7 +77,13 @@ function shortHash(s: string): string {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
   return h.toString(16).padStart(8, '0').slice(0, 6)
 }
-async function ledger($: EngineInterface, ev: string, tool: string, sid: string, result: string, detail: string): Promise<void> {
+// 同一个进程里的写入排队（并行的工具调用会同时触发），免得两次整读整写互相覆盖、丢行。
+// 两个 Claude Code 进程同时写还可能丢一两行：引擎没有文件锁，这里接受（只是少几行记录，不会写坏格式以外的东西）
+let ledgerChain: Promise<void> = Promise.resolve()
+function ledger($: EngineInterface, ev: string, tool: string, sid: string, result: string, detail: string): void {
+  ledgerChain = ledgerChain.then(() => writeLedger($, ev, tool, sid, result, detail))
+}
+async function writeLedger($: EngineInterface, ev: string, tool: string, sid: string, result: string, detail: string): Promise<void> {
   try {
     const file = `${(await charactersDir($)).replace(/[\\/]characters$/, '')}/events/claude-mod.jsonl`
     let rows: string[] = []
@@ -97,7 +103,7 @@ async function setState($: EngineInterface, state: State): Promise<void> {
   try { sid = await $.session.id() } catch {}
   const who = actors.get(sid) ?? ID
   await write($, `${who}-state.json`, state)
-  await ledger($, state.event, state.tool, sid, 'shown', `${who} ${state.pose}`)
+  ledger($, state.event, state.tool, sid, 'shown', `${who} ${state.pose}`)   // 不等它写完：记录不该拖慢状态更新
   try {
     const file = `${await stateDir($)}/${who}-sessions.json`
     let known: Record<string, { pose: string; event: string; ts: number }> = {}

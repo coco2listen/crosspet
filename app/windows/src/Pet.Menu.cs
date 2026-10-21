@@ -54,10 +54,10 @@ namespace CrossPet
                 {
                     var worn = Store.Skins != null && Store.Skins.TryGetValue(id, out var w) ? w as string ?? "" : "";
                     var baseName = Store.BaseOutfit.TryGetValue(id, out var bo) && bo != null ? bo : "原版";
-                    switchTo.DropDownItems.Add(Item($"{name} · {baseName}", () => { Wear(cid, ""); SwitchTo(cid); }, cid == current && worn == ""));
-                    foreach (var (sid, sname) in skins) { var k = sid; switchTo.DropDownItems.Add(Item($"{name} · {sname}", () => { Wear(cid, k); SwitchTo(cid); }, cid == current && worn == k)); }
+                    switchTo.DropDownItems.Add(Item($"{name} · {baseName}", () => { Wear(cid, ""); SwitchTo(cid, "skin", "menu"); }, cid == current && worn == ""));
+                    foreach (var (sid, sname) in skins) { var k = sid; switchTo.DropDownItems.Add(Item($"{name} · {sname}", () => { Wear(cid, k); SwitchTo(cid, "skin", k); }, cid == current && worn == k)); }
                 }
-                else switchTo.DropDownItems.Add(Item(name, () => SwitchTo(cid), cid == current));
+                else switchTo.DropDownItems.Add(Item(name, () => SwitchTo(cid, "manual", "menu"), cid == current));
             }
             menu.Items.Add(switchTo);
             Sep();

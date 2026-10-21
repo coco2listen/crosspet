@@ -224,12 +224,12 @@ namespace CrossPet
                             break;
                         case "edgeDock": Store.Settings["edgeDock"] = on; Store.SaveSettings(); if (!on) Undock(); break;
                         case "login": if (on != LoginEnabled) ToggleLogin(); break;
-                        case "character": if (value is string id) SwitchTo(id); break;
+                        case "character": if (value is string id) SwitchTo(id, "manual", "settings"); break;
                     }
                     break;
                 case "skin":   // 换衣服：记下来，重新载入立绘，并换成这个角色
                     if (msg.TryGetValue("id", out var kid) && kid is string skinId && Characters().Any(x => x.id == skinId) && msg.TryGetValue("skin", out var kv) && kv is string skinName)
-                    { Wear(skinId, skinName); SwitchTo(skinId); }
+                    { Wear(skinId, skinName); SwitchTo(skinId, "skin", skinName); }
                     break;
                 case "rename":
                     if (msg.TryGetValue("id", out var rid) && rid is string cid && Characters().Any(x => x.id == cid))

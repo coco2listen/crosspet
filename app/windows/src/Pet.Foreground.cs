@@ -33,7 +33,7 @@ namespace CrossPet
             if (!ready || Paused || !Store.Flag("followApps") || exe == "") return;
             if (string.IsNullOrWhiteSpace(match)) return;   // 对照表里没有，或者值留空：这个程序不跟随
             match = HostCharacter(match);
-            if (match != current) SwitchTo(match);
+            if (match != current) SwitchTo(match, "front", exe);
         }
 
         async Task FollowEvent(string id)
@@ -48,8 +48,9 @@ namespace CrossPet
             var input = Store.Json.Serialize(new { eventId = id, foregroundId = front, followApps = apps, followEvents = events, characters = Characters().Select(c => c.id).ToArray() });
             var allowed = await Eval($"FollowPolicy.eventTarget({input}) === {Q(id)}");
             // 网页答复前可能切了窗口、手动换人或关了跟随；旧请求不能覆盖新选择。
-            if (!ready || Paused || current != currentAt || Native.ForegroundExe() != exe || Store.Flag("followApps") != apps || Store.Flag("followEvents") != events) return;
-            if (allowed == "true" && id != current) SwitchTo(id);
+            if (!ready || Paused || current != currentAt || Native.ForegroundExe() != exe || Store.Flag("followApps") != apps || Store.Flag("followEvents") != events) { NotePet(id, null, "skipped", "answer-stale"); return; }
+            if (allowed != "true") { NotePet(id, null, "skipped", "front-ai"); return; }
+            if (id != current) SwitchTo(id, "event");
         }
 
         /// <summary>

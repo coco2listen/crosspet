@@ -80,6 +80,7 @@ namespace CrossPet
         {
             Directory.CreateDirectory(Characters);
             Directory.CreateDirectory(State);
+            Directory.CreateDirectory(Path.Combine(Data, "events"));   // 钩子 / 插件的事件记录（反馈用）；Claude Code 的 mod 只能写文件、不能建文件夹
             var src = Path.Combine(Install, "characters");
             foreach (var dir in Directory.GetDirectories(src))
             {

@@ -14,6 +14,7 @@
     <Compile Include="../../../app/windows/src/ZoomCheck.cs" />
     <Compile Include="../../../app/windows/src/InstallCheck.cs" />
     <Compile Include="../../../app/windows/src/ZOrderRule.cs" />
+    <Compile Include="../../../app/windows/src/Ledger.cs" />
     <Compile Include="../../../app/windows/src/RenderRestartState.cs" />
   </ItemGroup>
 </Project>

@@ -114,6 +114,16 @@ static class Program
         Check("层级：前台是任务栏，不插", !ZOrderRule.TuckBelow("Shell_TrayWnd", false) && !ZOrderRule.TuckBelow("Shell_SecondaryTrayWnd", false));
         Check("层级：前台是 CrossPet 自己（右键菜单、设置窗口），不插", !ZOrderRule.TuckBelow("WindowsForms10.Window.808.app.0.1", true));
         Check("层级：取不到类名，不插", !ZOrderRule.TuckBelow("", false) && !ZOrderRule.TuckBelow(null, false));
+        // 记录文件（反馈用）：一行一个 JSON，超过 240 行截回 200 行（docs/架构.md「记录」）
+        var line = Ledger.Line(new Dictionary<string, object> { ["char"] = "gpt", ["ev"] = "Pre\"Tool\nUse", ["ok"] = true, ["n"] = 3 });
+        var parsed = JsonDocument.Parse(line).RootElement;
+        Check("记录：一行能被解析、字段齐（含 t）", parsed.GetProperty("char").GetString() == "gpt" && parsed.GetProperty("ev").GetString() == "Pre\"Tool\nUse"
+            && parsed.GetProperty("ok").GetBoolean() && parsed.GetProperty("n").GetInt32() == 3 && parsed.GetProperty("t").GetDouble() > 1_700_000_000);
+        var ledgerFile = Path.Combine(Path.GetTempPath(), "crosspet-ledger-" + Guid.NewGuid().ToString("N"), "pet.jsonl");
+        for (int i = 0; i < 245; i++) Ledger.Append(ledgerFile, new Dictionary<string, object> { ["i"] = i });
+        var rows = File.ReadAllLines(ledgerFile).Where(l => l.Trim() != "").ToList();
+        Check("记录：245 次后在 200–240 行、最后一行是最后写的", rows.Count >= 200 && rows.Count <= 240 && JsonDocument.Parse(rows.Last()).RootElement.GetProperty("i").GetInt32() == 244);
+        Check("记录：读最后 n 行", Ledger.Tail(ledgerFile, 3).Split('\n').Length == 3 && Ledger.Tail(Path.Combine(Path.GetTempPath(), "nope.jsonl"), 3) == "");
         // 「跟着 AI」时要不要置顶（loki 实测：开 Chrome 再按 Win+D，桌面把不置顶的她一起盖住了，一直不出来）
         Check("置顶：始终在最上层", ZOrderRule.Top("always", false, false));
         Check("置顶：普通窗口模式从不置顶", !ZOrderRule.Top("normal", true, true));

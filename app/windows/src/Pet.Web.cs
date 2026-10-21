@@ -45,9 +45,13 @@ namespace CrossPet
             Js($"init({ManifestJson}); refreshLook({Q(id)})");
         }
 
-        void SwitchTo(string id)
+        /// <summary>why：为什么换（front 跟随前台 / event 跟随事件 / manual 菜单或设置 / skin 换衣服），记进换角色记录（反馈「角色换得不对」用）</summary>
+        void SwitchTo(string id, string why, string via = "")
         {
             if (!Characters().Any(c => c.id == id)) return;
+            var skin = Store.Skins != null && Store.Skins.TryGetValue(id, out var w) ? w as string ?? "" : "";
+            Ledger.Append(SwitchesFile, new Dictionary<string, object> { ["from"] = current ?? "", ["to"] = id, ["skin"] = skin, ["why"] = why, ["via"] = via });
+            if (id != current) Store.Log($"换角色 {current} → {id}（{why}{(via == "" ? "" : " " + via)}）");
             current = id;
             if (dock != null && !dockOut) After(800, ApplyDock);   // 换了角色，切口位置跟着变
             Store.Settings["character"] = id; Store.SaveSettings();
@@ -92,16 +96,17 @@ namespace CrossPet
                     var stamp = fi.LastWriteTimeUtc.Ticks + ":" + fi.Length;
                     var key = id + "-" + kind;
                     if (stamps.TryGetValue(key, out var old) && old == stamp) continue;
-                    if (kind == "state" && (DateTime.UtcNow - fi.LastWriteTimeUtc).TotalMinutes > 10) { stamps[key] = stamp; continue; }  // 只认 10 分钟内的
+                    if (kind == "state" && (DateTime.UtcNow - fi.LastWriteTimeUtc).TotalMinutes > 10) { stamps[key] = stamp; NotePet(id, null, "skipped", "stale"); continue; }  // 只认 10 分钟内的
                     var value = Store.ReadJson(file);
                     if (value == null) continue;   // 可能正被另一边写一半，下次再读
                     stamps[key] = stamp;
                     var json = Store.Json.Serialize(value);
                     if (kind == "sessions") { if (!Paused) Js($"setSessions({Q(id)}, {json})"); continue; }
                     dev?.Js($"logEvent({Q(id)}, {Q(kind)}, {json}, {(Paused ? "true" : "false")})");
-                    if (Paused) continue;
+                    if (Paused) { if (kind == "state") NotePet(id, value, "skipped", "paused"); continue; }
                     if (kind == "state")
                     {
+                        NotePet(id, value, "played");   // 交给网页了；网页自己的判断（不是当前角色、正在演彩蛋……）在 diagnoseDisplay 里
                         // 在终端里用 AI 时没有对应的前台程序：跟着最新一条工作事件换角色
                         var pose = value.TryGetValue("pose", out var p) ? p as string : null;
                         var ts = value.TryGetValue("ts", out var t) ? Convert.ToDouble(t) : 0;

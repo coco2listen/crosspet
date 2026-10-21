@@ -70,6 +70,24 @@ async function dropSession($: EngineInterface, who: string, sid: string): Promis
   } catch {}
 }
 
+// 事件记录（反馈「AI 干活时她没反应」用）：<数据目录>/events/claude-mod.jsonl，格式和 crosspet-hook.py 一样（见 docs/架构.md「记录」）。
+// 只记事件名、工具名、会话 id 的哈希、结果，不记内容；只留最近 200 行。events 文件夹由桌宠启动时建好
+function shortHash(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h.toString(16).padStart(8, '0').slice(0, 6)
+}
+async function ledger($: EngineInterface, ev: string, tool: string, sid: string, result: string, detail: string): Promise<void> {
+  try {
+    const file = `${(await charactersDir($)).replace(/[\\/]characters$/, '')}/events/claude-mod.jsonl`
+    let rows: string[] = []
+    try { rows = (await $.fs.read(file)).split('\n').filter(Boolean) } catch {}
+    rows.push(JSON.stringify({ t: Math.round(Date.now() / 10) / 100, ev, tool: tool.toLowerCase().slice(0, 60), sid: sid ? shortHash(sid) : '', turn: false, result, detail }))
+    if (rows.length > 240) rows = rows.slice(-200)
+    await $.fs.write(file, rows.join('\n') + '\n')
+  } catch {}   // 记录写不了不能影响 Claude
+}
+
 // 写状态；同时按会话另外记一份 <角色>-sessions.json（{会话id: {pose, event, ts}}），
 // 同时开着好几个会话在干活时，桌宠演「手忙脚乱」，每个会话一张小卡片
 type State = { pose: string; event: string; tool: string; ts: number }
@@ -79,6 +97,7 @@ async function setState($: EngineInterface, state: State): Promise<void> {
   try { sid = await $.session.id() } catch {}
   const who = actors.get(sid) ?? ID
   await write($, `${who}-state.json`, state)
+  await ledger($, state.event, state.tool, sid, 'shown', `${who} ${state.pose}`)
   try {
     const file = `${await stateDir($)}/${who}-sessions.json`
     let known: Record<string, { pose: string; event: string; ts: number }> = {}

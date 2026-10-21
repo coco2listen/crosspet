@@ -187,7 +187,14 @@ html.no-name #caption { display: none; }
 </div>
 <script>
 // 立绘加载失败：告诉 Windows 外壳记进日志（反馈里能看出是哪张图）。macOS 上没有这个通道，不做任何事
-addEventListener('error', e => { if (e.target && e.target.tagName === 'IMG' && e.target.src) window.chrome?.webview?.postMessage({ imageError: e.target.src }) }, true)
+// 同时记下最近 5 次失败的文件名（只要文件名），反馈时 diagnoseDisplay 交出去
+var imageErrors = []
+addEventListener('error', e => {
+  if (!(e.target && e.target.tagName === 'IMG' && e.target.src)) return
+  window.chrome?.webview?.postMessage({ imageError: e.target.src })
+  imageErrors.push({ file: decodeURIComponent(e.target.src.split(/[?#]/)[0].split('/').pop()), t: Math.round(Date.now() / 1000) })
+  if (imageErrors.length > 5) imageErrors.shift()
+}, true)
 </script>
 <script src="effects.js"></script>
 <script src="text-size.js"></script>
@@ -1194,17 +1201,36 @@ function endMulti() {
   watchStuck()
 }
 
+// 收到状态后怎么处理的（反馈「AI 干活时她没反应」用）：最近 40 条，只有角色、事件名、姿态和结论，由 diagnoseDisplay 交出去。
+// 结论：shown 演了 / not-current 不是当前角色（只记下状态）/ egg 正在演彩蛋 / multi 正在演多会话 / shaking 正被甩着 / no-pose 没有姿态
+const petVerdicts = []
+function noteVerdict(id, s, verdict) {
+  petVerdicts.push({ t: Math.round(Date.now() / 1000), id, ev: s?.event || '', pose: s?.pose || '', verdict })
+  if (petVerdicts.length > 40) petVerdicts.shift()
+}
+// 反馈时外壳调一次：她现在显示成什么样（只有名字和开关，不含路径）
+function diagnoseDisplay() {
+  const file = img => decodeURIComponent((img.getAttribute('src') || '').split(/[?#]/)[0].split('/').pop())
+  return {
+    char: charId, pose, skin: manifest?.characters?.[charId]?.skin || '',
+    img: { file: file(active), complete: active.complete, w: active.naturalWidth, h: active.naturalHeight },
+    spare: { file: file(spare), complete: spare.complete },
+    swapping: $('stage').classList.contains('swap'), tucked, egg: egg ? egg.host || true : false, pageHidden,
+    imageErrors: imageErrors.slice(), verdicts: petVerdicts.slice(),
+  }
+}
 function applyCharState(id, s) {
   if (id === 'current') id = charId   // 多模型宿主里没有对应角色的模型（WorkBuddy 的混元、Kimi……）：由当前角色来演
   const own = id                      // 事件原本属于哪家 AI：先按它记下状态，切回那家的角色时看到的才是最新的
   charState[own] = s
   if (standsIn(id)) id = charId       // 代演（reactTo）：别家 AI 的状态当成她自己的（多个会话同时干活时，由 refreshMulti 合并）
   charState[id] = s
-  if (egg) { if (egg.host === own && s.pose && s.pose !== 'idle') endEgg(); return }
-  if (id !== charId || !s.pose) return
+  if (egg) { noteVerdict(own, s, 'egg'); if (egg.host === own && s.pose && s.pose !== 'idle') endEgg(); return }
+  if (id !== charId || !s.pose) { noteVerdict(own, s, s.pose ? 'not-current' : 'no-pose'); return }
   lastActive = Date.now()
-  if (multi) return   // 正在演多会话：她的样子由各对话的状态决定（refreshMulti），这里不动
-  if (Date.now() < shakingUntil && s.event !== 'Stop') return   // 正被甩着：先只记下状态，甩停了 resumeWork 回到最新的活上（不然晕和干活来回闪）
+  if (multi) { noteVerdict(own, s, 'multi'); return }   // 正在演多会话：她的样子由各对话的状态决定（refreshMulti），这里不动
+  if (Date.now() < shakingUntil && s.event !== 'Stop') { noteVerdict(own, s, 'shaking'); return }
+  noteVerdict(own, s, 'shown')   // 正被甩着：先只记下状态，甩停了 resumeWork 回到最新的活上（不然晕和干活来回闪）
   clearTimeout(thinkTimer)
   watchStuck()
   const ev = s.event || ''

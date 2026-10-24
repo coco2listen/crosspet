@@ -20,8 +20,8 @@ test('卡片图：portrait 优先，没有用 idle，都没有是 null', () => {
 
 test('衣服卡：每套一张，正在穿的高亮', () => {
   assert.deepStrictEqual(C.outfitCards(chars, 'deepseek'), [
-    { id: '', name: '女仆装', image: 'deepseek/portrait.webp', on: false },
-    { id: 'deepseek-pajamas', name: '睡衣', image: 'deepseek-pajamas/idle.webp', on: true },
+    { id: '', name: '女仆装', image: 'deepseek/portrait.webp', art: true, on: false },
+    { id: 'deepseek-pajamas', name: '睡衣', image: 'deepseek-pajamas/idle.webp', art: false, on: true },
   ])
 })
 
@@ -30,7 +30,7 @@ test('原版卡用角色自己文件夹的图（穿着皮肤时也一样）', ()
 })
 
 test('没有别的衣服：只有一张「原版」', () => {
-  assert.deepStrictEqual(C.outfitCards(chars, 'claude'), [{ id: '', name: '原版', image: 'claude/idle.webp', on: true }])
+  assert.deepStrictEqual(C.outfitCards(chars, 'claude'), [{ id: '', name: '原版', image: 'claude/idle.webp', art: false, on: true }])
 })
 
 test('当前角色不在列表里：没有衣服卡', () => {
@@ -51,4 +51,10 @@ test('角色卡优先用探头头像 avatar，没有再退回展示图 / 待机�
   assert.equal(C.characterCards(list, 'gpt')[0].avatar, true)
   assert.equal(C.characterCards(chars, 'claude')[0].avatar, false)
   assert.equal(C.outfitCards(list, 'gpt')[0].image, 'gpt/portrait.webp')
+})
+
+test('衣服卡：有展示图（带背景的整张皮肤图）时 art 为 true，页面铺满整张卡；退回待机图时 false，缩进卡里', () => {
+  const [maid, pajamas] = C.outfitCards(chars, 'deepseek')
+  assert.equal(maid.art, true)
+  assert.equal(pajamas.art, false)
 })

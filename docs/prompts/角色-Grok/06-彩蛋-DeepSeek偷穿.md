@@ -17,7 +17,7 @@
 Two images are attached. The FIRST is DeepSeek (the blue whale maid girl). The SECOND is Grok (the blonde gothic little demon queen with twin-tails, a small crown and a huge X-shaped battle axe). Draw desktop-pet sprites for a short comedy "visitor" scene: DeepSeek has secretly borrowed Grok's crown, bows, cape collar and axe, and is pretending to be Grok.
 
 FORMAT RULES (every image):
-- Transparent background: real transparency (alpha), no floor, no ground shadow, no glow, no vignette, no frame. Keep the complete edges of the character, nothing cropped.
+- Transparent background: real transparency (alpha), no floor, no ground shadow, no glow, no vignette, no frame. Keep the complete edges of the character, nothing cropped. If an attached reference image has a plain white background, that is only because it was made before transparent output was available: do NOT copy the white background.
 - No text, no letters, no numbers, no speech bubbles, no symbols floating in the air. Phone screens only glow; nothing readable on them. Keep the axe's X shape and the circle-with-slash emblems, but add no other letters or logos.
 - Exactly one character (except caught.png and bye.png, see below), full body, standing, centered. Head near the top and feet near the bottom; she fills about 90% of the image height.
 - A continuous, closed dark outline around the whole silhouette (the axe included).

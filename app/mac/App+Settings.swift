@@ -96,7 +96,11 @@ extension App {
         }
     }
 
+    /// 设置、反馈窗口默认开到内容基本放得下的高度（反馈的四步一页排开、角色页的卡片墙），屏幕矮就缩到放得下
+    static func fitHeight(_ h: CGFloat) -> CGFloat { min(h, (NSScreen.main?.visibleFrame.height ?? h) - 60) }
+
     @objc func openSettings() { openSettingsAt(tab: nil) }
+    @objc func openCharacterPage() { openSettingsAt(tab: "character") }
 
     /// 桌宠页面发来的消息：「新功能」卡片点了「去看看」→ 打开设置停在「新功能」页
     func handlePet(_ body: Any) {
@@ -119,7 +123,7 @@ extension App {
         pendingSettingsTab = tab
         let config = WKWebViewConfiguration()
         config.userContentController.add(DevBridge(app: self, kind: .settings), name: "settings")
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: Self.fitHeight(780)),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         w.title = "CrossPet 设置"
         w.isReleasedWhenClosed = false
@@ -151,9 +155,12 @@ extension App {
             "aiAutostart": aiAutostart,
             "character": currentId ?? characterIds.first ?? "",
             "characters": characterIds.map { id -> [String: Any] in
-                var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
+                var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? "",
+                                        "images": cardImages(id)]   // 角色页卡片图（原版）
+                if let accent = accents[id] { c["accent"] = accent }
                 if let skins = skinChoices[id], !skins.isEmpty {   // 有别的衣服：原版排第一
-                    c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版"]] + skins.map { ["id": $0.id, "name": $0.name] }
+                    c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版", "images": cardImages(id)] as [String: Any]]
+                        + skins.map { ["id": $0.id, "name": $0.name, "images": cardImages($0.id)] as [String: Any] }
                     c["skin"] = (defaults.dictionary(forKey: "skins") as? [String: String])?[id] ?? ""
                 }
                 return c

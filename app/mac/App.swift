@@ -32,6 +32,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var feedbackWindow: NSWindow?
     var feedbackWeb: WKWebView?
     var defaultNames: [String: String] = [:]   // id → character.json 里的原名（设置页显示占位用）
+    var accents: [String: String] = [:]   // id → character.json 的 accent（设置页角色卡底色）
     var pauseRealEvents = false                // 控制台里测试时，先不让真实 AI 的状态打扰桌宠
 
 

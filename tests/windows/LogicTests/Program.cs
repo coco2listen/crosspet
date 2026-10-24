@@ -146,6 +146,18 @@ static class Program
         Check("渲染恢复：新版记录往返保持 UTC 和次数", RenderRestartState.Parse(capped.Serialize(), rn.AddDays(1)).Serialize() == capped.Serialize());
         Check("渲染恢复：损坏记录按一次失败接续", RenderRestartState.Parse("bad", rn).Next(rn)?.Attempts == 2);
         Check("渲染恢复：无历史次数时不继承失败预算", new RenderRestartState(0, rn).Next(rn.AddMinutes(2))?.Attempts == 1);
+        // 角色页卡片图：portrait 不算姿态；卡片图只给存在的文件（设置页据此退回待机图 / 色块）
+        Check("卡片图：portrait、avatar 不算姿态", !CardImages.IsSprite("portrait") && !CardImages.IsSprite("avatar") && CardImages.IsSprite("idle") && CardImages.IsSprite("happy-2"));
+        var cardRoot = Path.Combine(Path.GetTempPath(), "crosspet-cards-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(cardRoot, "deepseek"));
+        foreach (var f in new[] { "idle.webp", "idle-blink.webp", "portrait.webp", "avatar.png", "happy.webp" }) File.WriteAllText(Path.Combine(cardRoot, "deepseek", f), "");
+        Directory.CreateDirectory(Path.Combine(cardRoot, "mine"));
+        File.WriteAllText(Path.Combine(cardRoot, "mine", "default.png"), "");
+        var ci = CardImages.Of(cardRoot, "deepseek", "crosspet.data");
+        Check("卡片图：有展示图、头像和待机图", ci.Count == 3 && (string)ci["avatar"] == "https://crosspet.data/characters/deepseek/avatar.png" && (string)ci["portrait"] == "https://crosspet.data/characters/deepseek/portrait.webp" && (string)ci["idle"] == "https://crosspet.data/characters/deepseek/idle.webp");
+        Check("卡片图：只有 default 的自定义角色什么都不给", CardImages.Of(cardRoot, "mine", "crosspet.data").Count == 0);
+        Check("卡片图：文件夹不存在也不出错", CardImages.Of(cardRoot, "nobody", "crosspet.data").Count == 0);
+        Directory.Delete(cardRoot, true);
         Check("缩放：#28 的 200% 下 195×271 是 0.75 倍，不冒充重复 DPI 的 0.5 倍", ZoomCheck.Off(260, 362, 195, 271, 195, 271)
             && ZoomCheck.Fix(260, 362, 195, 271, 2, 1) == null);
         Console.WriteLine(fails == 0 ? "全部通过" : $"{fails} 项失败");

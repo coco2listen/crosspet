@@ -136,6 +136,7 @@ namespace CrossPet
                                                       .OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal))
             {
                 var stem = Path.GetFileNameWithoutExtension(f);
+                if (!CardImages.IsSprite(stem)) continue;   // 展示立绘只给设置页的卡片用
                 var url = $"https://{DataHost}/characters/{Uri.EscapeDataString(id)}/{Uri.EscapeDataString(Path.GetFileName(f))}";
                 if (stem == "idle-blink") { blink = url; continue; }
                 if (stem == "idle") blinkBase = url;

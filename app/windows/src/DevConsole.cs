@@ -9,6 +9,12 @@ using Microsoft.Web.WebView2.Wpf;
 
 namespace CrossPet
 {
+    /// <summary>设置、反馈窗口默认开到内容基本放得下的高度（反馈的四步一页排开、角色页的卡片墙），屏幕矮就缩到放得下。和 macOS 的 fitHeight 一致</summary>
+    static class WindowSize
+    {
+        public static double FitHeight(double h) => Math.Min(h, SystemParameters.WorkArea.Height - 40);
+    }
+
     /// <summary>
     /// 开发者控制台（Shift + 右键打开）：加载和 macOS 共用的 app/web/devconsole.html，
     /// 页面通过 chrome.webview.postMessage 发命令，这里转给桌宠页面执行，和 macOS 版 handleDev 一样。
@@ -92,7 +98,7 @@ namespace CrossPet
         {
             this.pet = pet;
             web = new WebView2();
-            window = new Window { Title = "CrossPet 设置", Width = 540, Height = 720, Content = web, WindowStartupLocation = WindowStartupLocation.CenterScreen };
+            window = new Window { Title = "CrossPet 设置", Width = 560, Height = WindowSize.FitHeight(780), Content = web, WindowStartupLocation = WindowStartupLocation.CenterScreen };
             window.Closed += (_, __) => Closed?.Invoke();
             window.Loaded += async (_, __) =>
             {
@@ -141,7 +147,7 @@ namespace CrossPet
         public FeedbackWindow(Pet pet, CoreWebView2Environment env)
         {
             web = new WebView2();
-            window = new Window { Title = "CrossPet 反馈问题", Width = 480, Height = 440, Content = web, WindowStartupLocation = WindowStartupLocation.CenterScreen };
+            window = new Window { Title = "CrossPet 反馈问题", Width = 560, Height = WindowSize.FitHeight(700), Content = web, WindowStartupLocation = WindowStartupLocation.CenterScreen };
             window.Closed += (_, __) => Closed?.Invoke();
             window.Loaded += async (_, __) =>
             {

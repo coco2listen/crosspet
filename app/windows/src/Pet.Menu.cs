@@ -45,22 +45,8 @@ namespace CrossPet
             menu.Items.Add(Item("召唤彩蛋", () => Js("playEgg(true)")));
             if (CodexResets && current == "gpt") menu.Items.Add(Item("会重置吗？", () => Js("askReset()")));   // 只有 GPT 有这个需求
             Sep();
-            var switchTo = new Forms.ToolStripMenuItem("换角色");
-            // 有别的衣服（皮肤）的角色展开成几项：「DeepSeek · 女仆装」「DeepSeek · Claude 卫衣」
-            foreach (var (id, name) in Characters())
-            {
-                var cid = id;
-                if (Store.SkinChoices.TryGetValue(id, out var skins) && skins.Count > 0)
-                {
-                    var worn = Store.Skins != null && Store.Skins.TryGetValue(id, out var w) ? w as string ?? "" : "";
-                    var baseName = Store.BaseOutfit.TryGetValue(id, out var bo) && bo != null ? bo : "原版";
-                    switchTo.DropDownItems.Add(Item($"{name} · {baseName}", () => { Wear(cid, ""); SwitchTo(cid, "skin", "menu"); }, cid == current && worn == ""));
-                    foreach (var (sid, sname) in skins) { var k = sid; switchTo.DropDownItems.Add(Item($"{name} · {sname}", () => { Wear(cid, k); SwitchTo(cid, "skin", k); }, cid == current && worn == k)); }
-                }
-                else switchTo.DropDownItems.Add(Item(name, () => SwitchTo(cid, "manual", "menu"), cid == current));
-            }
-            menu.Items.Add(switchTo);
-            Sep();
+            // 角色和衣服多了，名单一长串要翻半天：改成打开设置的角色页（卡片墙），看着图选
+            if (Characters().Count > 1) { menu.Items.Add(Item("换角色…", () => OpenSettings("character"))); Sep(); }
             var layer = new Forms.ToolStripMenuItem("显示层级");
             foreach (var (mode, title) in new[] { ("always", "始终在最上层"), ("ai", "跟着 AI（用 AI 时才浮在最上层）"), ("normal", "普通窗口（不置顶）") })
             {

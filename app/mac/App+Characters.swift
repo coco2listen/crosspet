@@ -6,6 +6,19 @@ import WebKit
 extension App {
     // MARK: 角色
 
+    /// 设置「角色」页卡片墙用的图：角色文件夹里的展示立绘 portrait（衣服卡）、探头头像 avatar（角色卡）和待机图 idle，只给存在的文件
+    /// （页面按「展示图 → 待机图 → 色块」退）。和 Windows 版 CardImages.Of 一致
+    func cardImages(_ id: String) -> [String: String] {
+        let dir = charactersDir.appendingPathComponent(id)
+        var d: [String: String] = [:]
+        for stem in ["portrait", "avatar", "idle"] {
+            if let f = ["webp", "png"].map({ dir.appendingPathComponent("\(stem).\($0)") }).first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                d[stem] = f.absoluteString
+            }
+        }
+        return d
+    }
+
     /// 扫描 characters/<id>/：character.json + 立绘（.webp / .png）。文件名去掉 -2、-3 后缀是姿态名，idle-blink 是眨眼帧。
     func loadCharacters() {
         var chars: [String: Any] = [:]
@@ -24,6 +37,7 @@ extension App {
             var blink: String?, blinkBase: String?
             for f in files {
                 let name = (f as NSString).deletingPathExtension
+                if name == "portrait" || name == "avatar" { continue }   // 展示立绘、探头头像只给设置页的卡片用，不是姿态
                 let url = dir.appendingPathComponent(f).absoluteString
                 if name == "idle-blink" { blink = url; continue }
                 if name == "idle" { blinkBase = url }
@@ -66,7 +80,7 @@ extension App {
             let (poses, blink, blinkBase) = sp
             let isEgg = info["egg"] as? Bool == true  // 彩蛋角色：不进菜单、不绑应用
             guard isEgg ? poses["pop"] != nil : (poses["idle"] != nil || poses["default"] != nil) else { continue }
-            if !isEgg { defaultNames[id] = info["name"] as? String ?? id; baseOutfit[id] = info["outfit"] as? String }
+            if !isEgg { defaultNames[id] = info["name"] as? String ?? id; baseOutfit[id] = info["outfit"] as? String; accents[id] = info["accent"] as? String }
             if !isEgg, let custom = renamed[id], !custom.isEmpty { info["name"] = custom }
             info["poses"] = poses
             info["blink"] = blink ?? NSNull()

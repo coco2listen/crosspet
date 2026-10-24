@@ -140,12 +140,26 @@ extension App {
     /// 额度汇总或用户状态，哪种都认（汇总优先）
     static func antigravityParse(_ obj: Any) -> [String: Any]? { antigravitySummary(obj) ?? antigravityQuota(obj) }
 
-    /// 额度汇总（RetrieveUserQuotaSummary）：Antigravity 自己分好组（「Gemini Models」「Claude and GPT models」），
-    /// 每组一个或几个窗口（本周 / 今日……）。每个窗口一行；一组只有一个窗口时不写窗口名，和用户状态那条路显示得一样
+    /// 额度汇总（RetrieveUserQuotaSummary）：Antigravity 自己分好组（「Gemini Models」「Claude and GPT models」「Gemini 4 Argon」……），
+    /// 每组一个或几个窗口（5h / 本周 / 今日……）。交出两样东西：
+    /// - text：关闭「合并显示各家额度」时用的，每组一行，一个组只留一个窗口（见下面的挑法），用「｜」隔开
+    /// - grid：合并显示时用的，结构化的行：{name, cells}。第一行（name 为空 = 用角色自己的名字）是 Gemini 池 + 独立池（Arg）各一格；
+    ///   第二行「Agy C/G」是 Claude/GPT 池的各个窗口（5h | 周），和 Claude / GPT 自己的两格对齐。不再靠前端去拆文本
     static func antigravitySummary(_ obj: Any) -> [String: Any]? {
         guard let groups = ((obj as? [String: Any])?["response"] as? [String: Any])?["groups"] as? [[String: Any]] else { return nil }
         let iso = ISO8601DateFormatter()
-        var rows: [(name: String, left: Double, reset: Date?)] = []
+        let fmt = DateFormatter()
+        typealias Cell = (label: String, left: Double, reset: Date?)
+        func piece(_ c: Cell) -> String {
+            var s = "\(c.label) 剩余 \(Int((c.left * 100).rounded()))%"
+            if let d = c.reset {   // 每行都标重置时间（5h 窗口很快就重置，知道多久能用上比知道还剩多少更有用）
+                fmt.dateFormat = d.timeIntervalSinceNow < 86400 ? "HH:mm" : "M/d"
+                s += " · \(fmt.string(from: d)) 重置"
+            }
+            return s
+        }
+        var rows: [Cell] = []
+        var gemini: Cell?, others: [Cell] = [], gpt: [Cell] = []
         let sorted = groups.enumerated().sorted { a, b in
             let ga = (a.element["displayName"] as? String ?? "").contains("Gemini") ? 0 : 1, gb = (b.element["displayName"] as? String ?? "").contains("Gemini") ? 0 : 1
             return ga != gb ? ga < gb : a.offset < b.offset
@@ -153,12 +167,9 @@ extension App {
         for g in sorted {
             let title = g["displayName"] as? String ?? ""
             // 只合并普通的两个池；「Gemini 4 Argon」这类独立额度池保留 Antigravity 给的名字，不然会和普通 Gemini 分不出来
-            let name = title.lowercased() == "gemini models" ? "Gemini" : title.contains("Claude") || title.contains("GPT") ? "Claude/GPT" : title
+            let isGemini = title.lowercased() == "gemini models", isGPT = !isGemini && (title.contains("Claude") || title.contains("GPT"))
+            let name = isGemini ? "Gemini" : isGPT ? "Claude/GPT" : title
             let buckets = g["buckets"] as? [[String: Any]] ?? []
-            // 一组只留一行：
-            // 有 5h 窗口、且 5h 没满 → 显示 5h（和它的重置时间）；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
-            // 例外：最紧的窗口 ≤10% 时不管 5h 怎样都显示它，周额度快用完了不能被 5h 盖住。
-            // 一样紧的窗口取重置得更晚的（真正限制你什么时候能继续用的是它），不看接口给的顺序
             var cands: [(win: String, window: String, left: Double, reset: Date?)] = []
             for b in buckets {
                 // 比例为 0 时会被省略（protobuf 转 JSON 不写默认值）：窗口在、比例不在 = 用完了
@@ -168,27 +179,35 @@ extension App {
                 let window = ["weekly": "本周", "daily": "今日", "5h": "5小时"][win] ?? ((b["displayName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? win)
                 cands.append((win, window, left, (b["resetTime"] as? String).flatMap { iso.date(from: $0) }))
             }
+            // 每组在 text 里只留一行：
+            // 有 5h 窗口、且 5h 没满 → 显示 5h（和它的重置时间）；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
+            // 例外：最紧的窗口 ≤10% 时不管 5h 怎样都显示它，周额度快用完了不能被 5h 盖住。
+            // 一样紧的窗口取重置得更晚的（真正限制你什么时候能继续用的是它），不看接口给的顺序
             let tightest = cands.reduce(nil as (win: String, window: String, left: Double, reset: Date?)?) { best, c in
                 guard let b = best else { return c }
                 return c.left < b.left || (c.left == b.left && (c.reset ?? .distantPast) > (b.reset ?? .distantPast)) ? c : b
             }
-            if let t = tightest {
-                let five = cands.first { $0.win == "5h" }
-                let pick = t.left > 0.1 && five != nil && five!.left < 1 ? five! : t
-                rows.append((cands.count > 1 ? "\(name) \(pick.window)" : name, pick.left, pick.reset))
+            guard let t = tightest else { continue }
+            let five = cands.first { $0.win == "5h" }
+            let pick = t.left > 0.1 && five != nil && five!.left < 1 ? five! : t
+            rows.append((cands.count > 1 ? "\(name) \(pick.window)" : name, pick.left, pick.reset))
+            // grid：Gemini 池一格（挑出来的那个窗口）；独立池一格（名字缩短：Argon → Arg）；Claude/GPT 池每个窗口一格，短窗口在前
+            if isGemini { gemini = (pick.window, pick.left, pick.reset) }
+            else if isGPT {
+                let order = ["5h": 0, "daily": 1, "weekly": 2]
+                gpt = cands.sorted { (order[$0.win] ?? 3) < (order[$1.win] ?? 3) }.map { ($0.window, $0.left, $0.reset) }
+            } else {
+                var short = title.hasPrefix("Gemini ") ? String(title.dropFirst("Gemini ".count)) : title
+                if short.lowercased().hasSuffix("argon") { short = "Arg" }
+                others.append((cands.count > 1 ? "\(short) \(pick.window)" : short, pick.left, pick.reset))
             }
         }
         guard !rows.isEmpty else { return nil }
-        let fmt = DateFormatter()
-        let parts = rows.map { r -> String in
-            var piece = "\(r.name) 剩余 \(Int((r.left * 100).rounded()))%"
-            if let d = r.reset {   // 每行都标重置时间（5h 窗口很快就重置，知道多久能用上比知道还剩多少更有用）
-                fmt.dateFormat = d.timeIntervalSinceNow < 86400 ? "HH:mm" : "M/d"
-                piece += " · \(fmt.string(from: d)) 重置"
-            }
-            return piece
-        }
-        return ["text": parts.joined(separator: " ｜ "), "low": (rows.map { $0.left }.min() ?? 1) <= 0.1]
+        var grid: [[String: Any]] = []
+        let first = ([gemini].compactMap { $0 } + others).map(piece)
+        if !first.isEmpty { grid.append(["name": "", "cells": first]) }
+        if !gpt.isEmpty { grid.append(["name": "Agy C/G", "cells": gpt.map(piece)]) }
+        return ["text": rows.map(piece).joined(separator: " ｜ "), "low": (rows.map { $0.left }.min() ?? 1) <= 0.1, "grid": grid]
     }
 
     /// 用户状态（GetUserStatus，旧版 Antigravity 的退路）：额度按「额度池」共享：Gemini 模型一个池，Claude 和 GPT 模型一个池（Antigravity 的「View Usage」也是这两组）。

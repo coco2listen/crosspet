@@ -96,3 +96,24 @@ test('4 行以上不管宽不宽都要收紧（底栏高度预算：3 行正常�
   assert.deepStrictEqual([0, 1, 2, 3].map(isCrowded), [false, false, false, false])
   assert.deepStrictEqual([4, 5, 6].map(isCrowded), [true, true, true])
 })
+
+test('来源给了 grid（Antigravity）：一行一行照画，行名为空用角色自己的名字，不再拆 text', () => {
+  const q = {
+    text: '不会被用到 剩余 1%', low: false,
+    grid: [{ name: '', cells: ['本周 剩余 99% · 10/27 重置', 'Arg 剩余 46% · 10/28 重置'] },
+           { name: 'Agy C/G', cells: ['5小时 剩余 100% · 14:00 重置', '本周 剩余 100% · 10/31 重置'] }],
+  }
+  const list = rows({ claude: { text: '5小时 剩余 98% · 07:50 重置 ｜ 本周 剩余 99%' }, gemini: q }, 'claude', ['claude', 'gemini'], nameOf)
+  assert.deepStrictEqual(list.map(r => r.name), ['Claude', 'Gemini', 'Agy C/G'])
+  assert.deepStrictEqual(list.map(r => r.id), ['claude', 'gemini', 'gemini'])
+  assert.deepStrictEqual(text(list[1]), ['周 99% · 10/27', 'Arg 46% · 10/28'])
+  assert.deepStrictEqual(text(list[2]), ['5h 100% · 14:00', '周 100% · 10/31'])
+})
+
+test('grid 为空或没有格子时退回拆 text；只有一格的行照常显示', () => {
+  const t = 'Gemini 剩余 80% ｜ Claude/GPT 剩余 70%'
+  assert.deepStrictEqual(text(rows({ gemini: { text: t, grid: [] } }, 'gemini', ['gemini'], nameOf)[0]), ['Gemini 80%', 'Claude/GPT 70%'])
+  assert.deepStrictEqual(text(rows({ gemini: { text: t, grid: [{ name: '', cells: [] }] } }, 'gemini', ['gemini'], nameOf)[0]), ['Gemini 80%', 'Claude/GPT 70%'])
+  const one = rows({ gemini: { text: t, grid: [{ name: '', cells: ['本周 剩余 80% · 10/27 重置'] }] } }, 'gemini', ['gemini'], nameOf)
+  assert.deepStrictEqual(one.map(text), [['周 80% · 10/27']])
+})

@@ -36,5 +36,10 @@ check "汇总：同上，周额度排在前面结果一样" summary-tie-weekly-f
 check "汇总：5h 满了显示周额度和重置时间" summary-multi-pool 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 99% · ") and q["text"].split(" ｜ ")[2].startswith("Claude/GPT 本周 剩余 100% · ")'
 check "汇总：周额度 ≤10% 时不被 5h 盖住" summary-weekly-low 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 5% · ") and q["low"] is True'
 check "汇总：每一行都带重置时间" summary-all-50 'all(seg.endswith(" 重置") for seg in q["text"].split(" ｜ ")) and len(q["text"].split(" ｜ ")) == 3'
+# 合并显示用的结构化行 grid：第一行（名字为空）= Gemini 池 + 独立池，第二行「Agy C/G」= Claude/GPT 池的各个窗口（5h | 周）
+check "grid：Gemini 池 + Arg 一行，Agy C/G 的 5小时 | 本周 另一行" summary-multi-pool 'q["grid"][0]["name"] == "" and q["grid"][0]["cells"][0].startswith("本周 剩余 99% · ") and q["grid"][0]["cells"][1].startswith("Arg 剩余 46% · ") and q["grid"][1]["name"] == "Agy C/G" and [c.split(" 剩余")[0] for c in q["grid"][1]["cells"]] == ["5小时", "本周"] and all(c.endswith(" 重置") for r in q["grid"] for c in r["cells"])'
+check "grid：没有 Argon 时第一行只有 Gemini 池一格" summary-two-windows 'len(q["grid"]) == 2 and q["grid"][0]["cells"][0].startswith("今日 剩余 40% · ") and len(q["grid"][0]["cells"]) == 1 and len(q["grid"][1]["cells"]) == 1'
+check "grid：全部用完都是 0%，C/G 的窗口短的在前" summary-all-used-up '[c.split(" 剩余 ")[1].split("%")[0] for r in q["grid"] for c in r["cells"]] == ["0"] * 4 and [c.split(" 剩余")[0] for c in q["grid"][1]["cells"]] == ["5小时", "本周"]'
+check "grid：text 不变（关闭合并显示时照旧一组一行）" summary-multi-pool 'len(q["text"].split(" ｜ ")) == 3'
 check "汇总是空的：不显示（程序会退回查用户状态）" summary-empty 'q == {}'
 exit $fail

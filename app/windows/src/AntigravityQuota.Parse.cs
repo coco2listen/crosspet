@@ -15,19 +15,32 @@ namespace CrossPet
         public static Dictionary<string, object> Parse(object obj) => ParseSummary(obj) ?? ParseStatus(obj);
 
         /// <summary>额度汇总（RetrieveUserQuotaSummary）：Antigravity 自己分好组（「Gemini Models」「Claude and GPT models」），
-        /// 每组一个或几个窗口（本周 / 今日……）。每个窗口一行；一组只有一个窗口时不写窗口名。和 macOS 版 antigravitySummary 一致</summary>
+        /// 每组一个或几个窗口（5h / 本周 / 今日……）。text 给关闭「合并显示」时用（每组一行）；grid 给合并显示用：
+        /// 第一行（name 为空 = 用角色自己的名字）是 Gemini 池 + 独立池（Arg）各一格，第二行「Agy C/G」是 Claude/GPT 池的各个窗口。和 macOS 版 antigravitySummary 一致</summary>
         public static Dictionary<string, object> ParseSummary(object obj)
         {
             if (!(obj is Dictionary<string, object> root) || !(root.TryGetValue("response", out var r0) && r0 is Dictionary<string, object> resp)) return null;
             if (!(resp.TryGetValue("groups", out var gs) && gs is object[] groups)) return null;
             string Title(Dictionary<string, object> g) => g.TryGetValue("displayName", out var t) ? t as string ?? "" : "";
             var rows = new List<(string name, double left, DateTime? reset)>();
+            (string label, double left, DateTime? reset)? gemini = null;
+            var others = new List<(string label, double left, DateTime? reset)>();
+            var gpt = new List<(string label, double left, DateTime? reset)>();
+            string Piece((string label, double left, DateTime? reset) r)
+            {
+                var piece = $"{r.label} 剩余 {(int)Math.Round(r.left * 100)}%";
+                if (r.reset is DateTime t)   // 每行都标重置时间（和 macOS 版一致）
+                    piece += $" · {((t - DateTime.Now).TotalHours < 24 ? t.ToString("HH:mm") : $"{t.Month}/{t.Day}")} 重置";
+                return piece;
+            }
             foreach (var g in groups.OfType<Dictionary<string, object>>().Select((g, i) => (g, i)).OrderBy(x => Title(x.g).Contains("Gemini") ? 0 : 1).ThenBy(x => x.i).Select(x => x.g))
             {
                 var title = Title(g);
-                var name = title.ToLowerInvariant() == "gemini models" ? "Gemini" : title.Contains("Claude") || title.Contains("GPT") ? "Claude/GPT" : title;
+                var isGemini = title.ToLowerInvariant() == "gemini models";
+                var isGpt = !isGemini && (title.Contains("Claude") || title.Contains("GPT"));
+                var name = isGemini ? "Gemini" : isGpt ? "Claude/GPT" : title;
                 var buckets = (g.TryGetValue("buckets", out var bs) && bs is object[] arr ? arr : new object[0]).OfType<Dictionary<string, object>>().ToList();
-                // 一组只留一行（和 macOS 版一致）：有 5h 窗口、且 5h 没满 → 显示 5h；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
+                // 每组在 text 里只留一行（和 macOS 版一致）：有 5h 窗口、且 5h 没满 → 显示 5h；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
                 // 例外：最紧的窗口 ≤10% 时不管 5h 怎样都显示它。一样紧的取重置得更晚的，不看接口给的顺序
                 var cands = new List<(string win, string window, double left, DateTime? reset)>();
                 foreach (var b in buckets)
@@ -40,25 +53,40 @@ namespace CrossPet
                     DateTime? reset = DateTime.TryParse(resetText, null, System.Globalization.DateTimeStyles.RoundtripKind, out var d) ? d.ToLocalTime() : (DateTime?)null;
                     cands.Add((win, window, left, reset));
                 }
-                if (cands.Count > 0)
+                if (cands.Count == 0) continue;
+                var tightest = cands[0];
+                foreach (var c in cands.Skip(1))
+                    if (c.left < tightest.left || (c.left == tightest.left && (c.reset ?? DateTime.MinValue) > (tightest.reset ?? DateTime.MinValue))) tightest = c;
+                var five = cands.FirstOrDefault(c => c.win == "5h");
+                var pick = tightest.left > 0.1 && five.win == "5h" && five.left < 1 ? five : tightest;
+                rows.Add((cands.Count > 1 ? $"{name} {pick.window}" : name, pick.left, pick.reset));
+                // grid：Gemini 池一格（挑出来的那个窗口）；独立池一格（名字缩短：Argon → Arg）；Claude/GPT 池每个窗口一格，短窗口在前
+                if (isGemini) gemini = (pick.window, pick.left, pick.reset);
+                else if (isGpt)
                 {
-                    var tightest = cands[0];
-                    foreach (var c in cands.Skip(1))
-                        if (c.left < tightest.left || (c.left == tightest.left && (c.reset ?? DateTime.MinValue) > (tightest.reset ?? DateTime.MinValue))) tightest = c;
-                    var five = cands.FirstOrDefault(c => c.win == "5h");
-                    var pick = tightest.left > 0.1 && five.win == "5h" && five.left < 1 ? five : tightest;
-                    rows.Add((cands.Count > 1 ? $"{name} {pick.window}" : name, pick.left, pick.reset));
+                    int Order(string win) => win == "5h" ? 0 : win == "daily" ? 1 : win == "weekly" ? 2 : 3;
+                    gpt = cands.OrderBy(c => Order(c.win)).Select(c => (c.window, c.left, c.reset)).ToList();
+                }
+                else
+                {
+                    var shortName = title.StartsWith("Gemini ") ? title.Substring("Gemini ".Length) : title;
+                    if (shortName.ToLowerInvariant().EndsWith("argon")) shortName = "Arg";
+                    others.Add((cands.Count > 1 ? $"{shortName} {pick.window}" : shortName, pick.left, pick.reset));
                 }
             }
             if (rows.Count == 0) return null;
-            var parts = rows.Select((r, i) =>
+            var grid = new List<object>();
+            var first = new List<(string label, double left, DateTime? reset)>();
+            if (gemini != null) first.Add(gemini.Value);
+            first.AddRange(others);
+            if (first.Count > 0) grid.Add(new Dictionary<string, object> { ["name"] = "", ["cells"] = first.Select(Piece).ToList() });
+            if (gpt.Count > 0) grid.Add(new Dictionary<string, object> { ["name"] = "Agy C/G", ["cells"] = gpt.Select(Piece).ToList() });
+            return new Dictionary<string, object>
             {
-                var piece = $"{r.name} 剩余 {(int)Math.Round(r.left * 100)}%";
-                if (r.reset is DateTime t)   // 每行都标重置时间（和 macOS 版一致）
-                    piece += $" · {((t - DateTime.Now).TotalHours < 24 ? t.ToString("HH:mm") : $"{t.Month}/{t.Day}")} 重置";
-                return piece;
-            });
-            return new Dictionary<string, object> { ["text"] = string.Join(" ｜ ", parts), ["low"] = rows.Min(r => r.left) <= 0.1 };
+                ["text"] = string.Join(" ｜ ", rows.Select(r => Piece((r.name, r.left, r.reset)))),
+                ["low"] = rows.Min(r => r.left) <= 0.1,
+                ["grid"] = grid,
+            };
         }
 
         /// <summary>用户状态（GetUserStatus，旧版 Antigravity 的退路；里面的额度是模型列表顺带的缓存，会慢几分钟）</summary>

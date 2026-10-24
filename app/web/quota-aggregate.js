@@ -20,7 +20,7 @@
   }
 
   // quota：{ <角色 id>: { text, low } | null }；own：当前角色 id，排在最前；all：角色 id 的顺序；
-  // nameOf：id → 名字。返回 [{ id, name, cells: [parts] }]，一家 AI 一行，每个额度窗口一格（原文用「｜」隔开）。
+  // nameOf：id → 名字。返回 [{ id, name, cells: [parts] }]，一家 AI 一行（来源给了 grid 的可以有几行），每个额度窗口一格（原文用「｜」隔开）。
   // 没有额度（没接入、没打开开关、读不到）的 AI 直接跳过，不占行
   function rows(quota, own, all, nameOf) {
     const out = []
@@ -28,6 +28,15 @@
     for (const id of [own, ...all.filter(i => i !== own).sort()]) {
       const q = quota[id]
       if (!q || !q.text) continue
+      // 来源给了结构化的行（Antigravity：Gemini + 独立池一行，Claude/GPT 池的 5h | 周另起一行），就一行一行照画，不再拆文本；
+      // 行名为空用角色自己的名字
+      if (Array.isArray(q.grid) && q.grid.some(g => g?.cells?.length)) {
+        for (const g of q.grid) {
+          const cells = (g?.cells || []).map(seg => compact(String(seg), !!q.low))
+          if (cells.length) out.push({ id, name: g.name || nameOf(id), cells })
+        }
+        continue
+      }
       const cells = String(q.text).split(/\s*｜\s*/).filter(Boolean).map(seg => compact(seg, !!q.low))
       if (cells.length) out.push({ id, name: nameOf(id), cells })
     }

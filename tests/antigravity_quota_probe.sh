@@ -26,8 +26,15 @@ check "不可用的模型不算进额度" ultra-only-model 'q["text"].split(" �
 check "真用完了还是 0%" gemini-used-up 'q["text"].startswith("Gemini 剩余 0%") and "重置" in q["text"].split(" ｜ ")[0] and q["text"].split(" ｜ ")[1] == "Claude/GPT 剩余 100%" and q["low"] is True'
 check "两个池 + 不可用模型" two-pools-with-unavailable 'q["text"].startswith("Gemini 剩余 52%") and q["text"].split(" ｜ ")[1] == "Claude/GPT 剩余 99%" and " 0%" not in q["text"] and q["low"] is False'
 # 主要来源：额度汇总（RetrieveUserQuotaSummary，和 Antigravity 的「View Usage」同一份数据，刚对话完就更新）
-check "汇总：两组各一行，98% 是新数据" summary-live 'q["text"].split(" ｜ ")[0].startswith("Gemini 剩余 100%") and "重置" in q["text"].split(" ｜ ")[0] and q["text"].split(" ｜ ")[1] == "Claude/GPT 剩余 98%" and q["low"] is False'
+check "汇总：两组各一行，98% 是新数据" summary-live 'q["text"].split(" ｜ ")[0].startswith("Gemini 剩余 100%") and "重置" in q["text"].split(" ｜ ")[0] and q["text"].split(" ｜ ")[1].startswith("Claude/GPT 剩余 98% · ") and q["text"].split(" ｜ ")[1].endswith(" 重置") and q["low"] is False'
 check "汇总：用完时比例被省略，算 0%" summary-gemini-used-up 'q["text"].startswith("Gemini 剩余 0%") and q["low"] is True'
-check "汇总：一组有两个窗口，各一行带说明" summary-two-windows 'q["text"].split(" ｜ ")[0].startswith("Gemini 今日 剩余 40%") and q["text"].split(" ｜ ")[1].startswith("Gemini 本周 剩余 100%") and q["text"].split(" ｜ ")[2] == "Claude/GPT 剩余 98%"'
+check "汇总：一组有两个窗口，只留剩余最少的那个" summary-two-windows 'q["text"].split(" ｜ ")[0].startswith("Gemini 今日 剩余 40%") and q["text"].split(" ｜ ")[1].startswith("Claude/GPT 剩余 98% · ") and "本周" not in q["text"]'
+check "汇总：独立额度池（Gemini 4 Argon）保留名字，每组一行" summary-multi-pool 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 99%") and q["text"].split(" ｜ ")[1].startswith("Gemini 4 Argon 剩余 46% · ") and q["text"].split(" ｜ ")[2].startswith("Claude/GPT") and len(q["text"].split(" ｜ ")) == 3 and "Five Hour" not in q["text"]'
+check "汇总：5h 最紧时显示成「5小时」" summary-5h-tightest 'q["text"].split(" ｜ ")[0].startswith("Gemini 5小时 剩余 30%") and q["text"].split(" ｜ ")[1].startswith("Claude/GPT 剩余 100% · ") and "本周" not in q["text"]'
+check "汇总：两个窗口一样紧（50%），不管接口顺序都显示 5小时 和它的重置时间" summary-tie-5h-first 'q["text"].split(" ｜ ")[0].startswith("Gemini 5小时 剩余 50% · ") and q["text"].split(" ｜ ")[0].endswith(" 重置")'
+check "汇总：同上，周额度排在前面结果一样" summary-tie-weekly-first 'q["text"].split(" ｜ ")[0].startswith("Gemini 5小时 剩余 50% · ")'
+check "汇总：5h 满了显示周额度和重置时间" summary-multi-pool 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 99% · ") and q["text"].split(" ｜ ")[2].startswith("Claude/GPT 本周 剩余 100% · ")'
+check "汇总：周额度 ≤10% 时不被 5h 盖住" summary-weekly-low 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 5% · ") and q["low"] is True'
+check "汇总：每一行都带重置时间" summary-all-50 'all(seg.endswith(" 重置") for seg in q["text"].split(" ｜ ")) and len(q["text"].split(" ｜ ")) == 3'
 check "汇总是空的：不显示（程序会退回查用户状态）" summary-empty 'q == {}'
 exit $fail

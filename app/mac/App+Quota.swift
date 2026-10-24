@@ -152,20 +152,37 @@ extension App {
         }.map { $0.element }
         for g in sorted {
             let title = g["displayName"] as? String ?? ""
-            let name = title.contains("Gemini") ? "Gemini" : title.contains("Claude") || title.contains("GPT") ? "Claude/GPT" : title
+            // 只合并普通的两个池；「Gemini 4 Argon」这类独立额度池保留 Antigravity 给的名字，不然会和普通 Gemini 分不出来
+            let name = title.lowercased() == "gemini models" ? "Gemini" : title.contains("Claude") || title.contains("GPT") ? "Claude/GPT" : title
             let buckets = g["buckets"] as? [[String: Any]] ?? []
+            // 一组只留一行：
+            // 有 5h 窗口、且 5h 没满 → 显示 5h（和它的重置时间）；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
+            // 例外：最紧的窗口 ≤10% 时不管 5h 怎样都显示它，周额度快用完了不能被 5h 盖住。
+            // 一样紧的窗口取重置得更晚的（真正限制你什么时候能继续用的是它），不看接口给的顺序
+            var cands: [(win: String, window: String, left: Double, reset: Date?)] = []
             for b in buckets {
                 // 比例为 0 时会被省略（protobuf 转 JSON 不写默认值）：窗口在、比例不在 = 用完了
                 let left = (b["remainingFraction"] as? NSNumber)?.doubleValue ?? 0
-                let window = ["weekly": "本周", "daily": "今日"][b["window"] as? String ?? ""] ?? (b["displayName"] as? String ?? "")
-                rows.append((buckets.count > 1 ? "\(name) \(window)" : name, left, (b["resetTime"] as? String).flatMap { iso.date(from: $0) }))
+                // 认得的窗口写中文（和 Claude / GPT 的「5小时」「本周」一致）；不认得的先用接口给的名字，再不行用窗口 id，不留空
+                let win = b["window"] as? String ?? ""
+                let window = ["weekly": "本周", "daily": "今日", "5h": "5小时"][win] ?? ((b["displayName"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? win)
+                cands.append((win, window, left, (b["resetTime"] as? String).flatMap { iso.date(from: $0) }))
+            }
+            let tightest = cands.reduce(nil as (win: String, window: String, left: Double, reset: Date?)?) { best, c in
+                guard let b = best else { return c }
+                return c.left < b.left || (c.left == b.left && (c.reset ?? .distantPast) > (b.reset ?? .distantPast)) ? c : b
+            }
+            if let t = tightest {
+                let five = cands.first { $0.win == "5h" }
+                let pick = t.left > 0.1 && five != nil && five!.left < 1 ? five! : t
+                rows.append((cands.count > 1 ? "\(name) \(pick.window)" : name, pick.left, pick.reset))
             }
         }
         guard !rows.isEmpty else { return nil }
         let fmt = DateFormatter()
-        let parts = rows.enumerated().map { i, r -> String in
+        let parts = rows.map { r -> String in
             var piece = "\(r.name) 剩余 \(Int((r.left * 100).rounded()))%"
-            if i == 0 || r.left <= 0.1, let d = r.reset {   // 重置时间标在第一行和快用完的行上
+            if let d = r.reset {   // 每行都标重置时间（5h 窗口很快就重置，知道多久能用上比知道还剩多少更有用）
                 fmt.dateFormat = d.timeIntervalSinceNow < 86400 ? "HH:mm" : "M/d"
                 piece += " · \(fmt.string(from: d)) 重置"
             }

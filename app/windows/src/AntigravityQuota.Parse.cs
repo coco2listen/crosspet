@@ -25,24 +25,36 @@ namespace CrossPet
             foreach (var g in groups.OfType<Dictionary<string, object>>().Select((g, i) => (g, i)).OrderBy(x => Title(x.g).Contains("Gemini") ? 0 : 1).ThenBy(x => x.i).Select(x => x.g))
             {
                 var title = Title(g);
-                var name = title.Contains("Gemini") ? "Gemini" : title.Contains("Claude") || title.Contains("GPT") ? "Claude/GPT" : title;
+                var name = title.ToLowerInvariant() == "gemini models" ? "Gemini" : title.Contains("Claude") || title.Contains("GPT") ? "Claude/GPT" : title;
                 var buckets = (g.TryGetValue("buckets", out var bs) && bs is object[] arr ? arr : new object[0]).OfType<Dictionary<string, object>>().ToList();
+                // 一组只留一行（和 macOS 版一致）：有 5h 窗口、且 5h 没满 → 显示 5h；5h 满了 → 显示别的窗口里最紧的（一般是周额度）；
+                // 例外：最紧的窗口 ≤10% 时不管 5h 怎样都显示它。一样紧的取重置得更晚的，不看接口给的顺序
+                var cands = new List<(string win, string window, double left, DateTime? reset)>();
                 foreach (var b in buckets)
                 {
                     // 比例为 0 时会被省略（protobuf 转 JSON 不写默认值）：窗口在、比例不在 = 用完了
                     var left = b.TryGetValue("remainingFraction", out var f) ? Convert.ToDouble(f) : 0;
                     var win = b.TryGetValue("window", out var w) ? w as string ?? "" : "";
-                    var window = win == "weekly" ? "本周" : win == "daily" ? "今日" : (b.TryGetValue("displayName", out var dn) ? dn as string ?? "" : "");
+                    var window = win == "weekly" ? "本周" : win == "daily" ? "今日" : win == "5h" ? "5小时" : (b.TryGetValue("displayName", out var dn) && !string.IsNullOrEmpty(dn as string) ? (string)dn : win);
                     var resetText = b.TryGetValue("resetTime", out var rt) ? rt as string ?? "" : "";
                     DateTime? reset = DateTime.TryParse(resetText, null, System.Globalization.DateTimeStyles.RoundtripKind, out var d) ? d.ToLocalTime() : (DateTime?)null;
-                    rows.Add((buckets.Count > 1 ? $"{name} {window}" : name, left, reset));
+                    cands.Add((win, window, left, reset));
+                }
+                if (cands.Count > 0)
+                {
+                    var tightest = cands[0];
+                    foreach (var c in cands.Skip(1))
+                        if (c.left < tightest.left || (c.left == tightest.left && (c.reset ?? DateTime.MinValue) > (tightest.reset ?? DateTime.MinValue))) tightest = c;
+                    var five = cands.FirstOrDefault(c => c.win == "5h");
+                    var pick = tightest.left > 0.1 && five.win == "5h" && five.left < 1 ? five : tightest;
+                    rows.Add((cands.Count > 1 ? $"{name} {pick.window}" : name, pick.left, pick.reset));
                 }
             }
             if (rows.Count == 0) return null;
             var parts = rows.Select((r, i) =>
             {
                 var piece = $"{r.name} 剩余 {(int)Math.Round(r.left * 100)}%";
-                if ((i == 0 || r.left <= 0.1) && r.reset is DateTime t)   // 重置时间标在第一行和快用完的行上
+                if (r.reset is DateTime t)   // 每行都标重置时间（和 macOS 版一致）
                     piece += $" · {((t - DateTime.Now).TotalHours < 24 ? t.ToString("HH:mm") : $"{t.Month}/{t.Day}")} 重置";
                 return piece;
             });

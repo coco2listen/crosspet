@@ -96,6 +96,9 @@ extension App {
         }
     }
 
+    /// 设置、反馈窗口默认开到内容基本放得下的高度（反馈的四步一页排开、角色页的卡片墙），屏幕矮就缩到放得下
+    static func fitHeight(_ h: CGFloat) -> CGFloat { min(h, (NSScreen.main?.visibleFrame.height ?? h) - 60) }
+
     @objc func openSettings() { openSettingsAt(tab: nil) }
     @objc func openCharacterPage() { openSettingsAt(tab: "character") }
 
@@ -120,7 +123,7 @@ extension App {
         pendingSettingsTab = tab
         let config = WKWebViewConfiguration()
         config.userContentController.add(DevBridge(app: self, kind: .settings), name: "settings")
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: Self.fitHeight(780)),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         w.title = "CrossPet 设置"
         w.isReleasedWhenClosed = false

@@ -1,6 +1,6 @@
-// 设置「角色」页的卡片墙：上面一排是当前角色的衣服（大卡），下面一排是所有角色（小卡）。
+// 设置「角色」页的卡片墙：上面一排是当前角色的衣服（大卡，用展示图 portrait），下面一排是所有角色（小卡，用探头头像 avatar）。
 // 这里只决定有哪些卡、用哪张图、哪张高亮；画和发消息在 settings.html。设计见 docs/superpowers/specs/2026-10-20-character-picker-design.md
-// 输入是外壳交给设置页的 characters：[{ id, name, accent?, images: { portrait?, idle? }, skins?: [{ id, name, images }], skin? }]，
+// 输入是外壳交给设置页的 characters：[{ id, name, accent?, images: { portrait?, avatar?, idle? }, skins?: [{ id, name, images }], skin? }]，
 // skins[0] 是原版（id 为空），它的 images 是角色自己文件夹里的图——穿着皮肤时也不会变成皮肤的图
 ;(function (root) {
   const DEFAULT_ACCENT = '#e0b48a'
@@ -16,9 +16,10 @@
     return c.skins.map(k => ({ id: k.id, name: k.name, image: imageOf(k.images), on: k.id === worn }))
   }
 
+  // 角色卡优先用专门画的探头头像 avatar（从卡片左下角探出脑袋，铺满整张卡），没有再用展示图 / 待机图（整身缩进卡里）
   function characterCards(chars, currentId) {
-    return chars.map(c => ({ id: c.id, name: c.name, image: imageOf(c.images), accent: c.accent || DEFAULT_ACCENT,
-      count: c.skins?.length || 1, on: c.id === currentId }))
+    return chars.map(c => ({ id: c.id, name: c.name, image: c.images?.avatar || imageOf(c.images), avatar: !!c.images?.avatar,
+      accent: c.accent || DEFAULT_ACCENT, count: c.skins?.length || 1, on: c.id === currentId }))
   }
 
   const api = { imageOf, outfitCards, characterCards }

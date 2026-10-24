@@ -49,6 +49,7 @@ h1 { font-size: 15px; margin: 0 0 2px; }
 .outfits .pcard { height: 156px; }
 .roster .pcard { height: 92px; }
 .pcard img, .pcard .ph { position: absolute; left: 0; right: 0; top: 4px; bottom: 20px; width: 100%; height: calc(100% - 24px); object-fit: contain; }
+.pcard.avatar img { top: 0; bottom: 0; height: 100%; object-fit: cover; object-position: left bottom; }   /* 探头头像铺满整张卡，从左下角探出来 */
 .pcard .ph { display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, var(--ink)); }
 .pcard b { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   background: color-mix(in srgb, var(--panel) 82%, transparent); }
@@ -118,11 +119,11 @@ input[type=range] { width: 150px; accent-color: var(--accent); }
 <div class="card" data-tab="character">
   <h2 id="outfitsTitle">衣服</h2>
   <div class="cards outfits" id="outfitCards"></div>
-  <div class="item"><div class="label">名字<small>留空恢复默认</small></div>
-    <div class="ctl"><input type="text" id="name" maxlength="40"><button id="saveName">保存</button></div></div>
   <div id="peakOutfits"></div>
-  <h2>角色<small style="font-weight:400"> · 点一下换成她（穿原版）</small></h2>
+  <h2>角色</h2>
   <div class="cards roster" id="characterCards"></div>
+  <div class="item"><div class="label">名字<small>当前角色的名字，留空恢复默认</small></div>
+    <div class="ctl"><input type="text" id="name" maxlength="40"><button id="saveName">保存</button></div></div>
   <div class="item"><div class="label">跟随前台 AI 应用<small>切到哪个 AI 的 App，就换成哪个角色</small></div>
     <div class="ctl"><label class="switch"><input type="checkbox" data-key="followApps"><span></span></label></div></div>
   <div class="item" data-only="followEvents"><div class="label">跟随 AI 工作事件<small>在终端里用 AI 时，按最近在干活的 AI 换角色</small></div>
@@ -280,7 +281,7 @@ function renderCharacterCards(s) {
   $('outfitsTitle').textContent = cur ? `${cur.name} 的衣服` : '衣服'
   const card = (c, accent, onClick, count) => {
     const b = document.createElement('button')
-    b.className = 'pcard' + (c.on ? ' on' : '')
+    b.className = 'pcard' + (c.on ? ' on' : '') + (c.avatar ? ' avatar' : '')
     b.style.setProperty('--c', accent)
     b.title = c.name
     const placeholder = () => { const d = document.createElement('div'); d.className = 'ph'; d.textContent = [...c.name][0] || '?'; return d }

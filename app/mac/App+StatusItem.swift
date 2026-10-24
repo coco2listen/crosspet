@@ -58,12 +58,6 @@ extension App {
     @objc func egg() { js("playEgg(true)") }
     @objc func askReset() { js("askReset()") }
 
-    @objc func switchCharacter(_ item: NSMenuItem) {
-        guard let value = item.representedObject as? String else { return }
-        let parts = value.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-        if parts.count == 2 { wear(parts[0], parts[1]) }
-        switchTo(parts[0], why: "manual", via: "menu")
-    }
     /// 换衣服（皮肤）：记下来，重新载入立绘；正在显示的就是她的话马上换上
     func wear(_ id: String, _ skin: String) {
         var skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]

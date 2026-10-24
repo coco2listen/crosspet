@@ -145,16 +145,19 @@ namespace CrossPet
                 ["hotkeys"] = new[] { new Dictionary<string, object> { ["id"] = "off", ["label"] = "不用快捷键" } }.Concat(HotkeyChoices.Select(h => new Dictionary<string, object> { ["id"] = h.id, ["label"] = h.label })).ToList(), ["aiAutostart"] = AIAutostart, ["character"] = current, ["updating"] = updating,
                 ["characters"] = Characters().Select(c =>
                 {
+                    var info = Store.ReadJson(Path.Combine(Store.Characters, c.id, "character.json"));
                     var d = new Dictionary<string, object>
                     {
                         ["id"] = c.id, ["name"] = c.name,
-                        ["defaultName"] = Store.ReadJson(Path.Combine(Store.Characters, c.id, "character.json"))?["name"] as string ?? c.id,
+                        ["defaultName"] = info?["name"] as string ?? c.id,
+                        ["accent"] = info?["accent"] as string,
+                        ["images"] = CardImages.Of(Store.Characters, c.id, Store.DataHost),   // 角色页卡片图（原版）
                         ["custom"] = Store.Names.TryGetValue(c.id, out var n) ? n as string ?? "" : "",
                     };
                     if (Store.SkinChoices.TryGetValue(c.id, out var skins) && skins.Count > 0)   // 有别的衣服：原版排第一
                     {
-                        var list = new List<object> { new Dictionary<string, object> { ["id"] = "", ["name"] = Store.BaseOutfit.TryGetValue(c.id, out var bo) && bo != null ? bo : "原版" } };
-                        list.AddRange(skins.Select(k => (object)new Dictionary<string, object> { ["id"] = k.id, ["name"] = k.name }));
+                        var list = new List<object> { new Dictionary<string, object> { ["id"] = "", ["name"] = Store.BaseOutfit.TryGetValue(c.id, out var bo) && bo != null ? bo : "原版", ["images"] = d["images"] } };
+                        list.AddRange(skins.Select(k => (object)new Dictionary<string, object> { ["id"] = k.id, ["name"] = k.name, ["images"] = CardImages.Of(Store.Characters, k.id, Store.DataHost) }));
                         d["skins"] = list;
                         d["skin"] = Store.Skins != null && Store.Skins.TryGetValue(c.id, out var cur) ? cur as string ?? "" : "";
                     }

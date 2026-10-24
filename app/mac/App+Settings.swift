@@ -97,6 +97,7 @@ extension App {
     }
 
     @objc func openSettings() { openSettingsAt(tab: nil) }
+    @objc func openCharacterPage() { openSettingsAt(tab: "character") }
 
     /// 桌宠页面发来的消息：「新功能」卡片点了「去看看」→ 打开设置停在「新功能」页
     func handlePet(_ body: Any) {
@@ -151,9 +152,12 @@ extension App {
             "aiAutostart": aiAutostart,
             "character": currentId ?? characterIds.first ?? "",
             "characters": characterIds.map { id -> [String: Any] in
-                var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
+                var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? "",
+                                        "images": cardImages(id)]   // 角色页卡片图（原版）
+                if let accent = accents[id] { c["accent"] = accent }
                 if let skins = skinChoices[id], !skins.isEmpty {   // 有别的衣服：原版排第一
-                    c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版"]] + skins.map { ["id": $0.id, "name": $0.name] }
+                    c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版", "images": cardImages(id)] as [String: Any]]
+                        + skins.map { ["id": $0.id, "name": $0.name, "images": cardImages($0.id)] as [String: Any] }
                     c["skin"] = (defaults.dictionary(forKey: "skins") as? [String: String])?[id] ?? ""
                 }
                 return c

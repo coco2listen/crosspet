@@ -66,6 +66,7 @@ extension App {
         defaults.set(skins, forKey: "skins")
         loadCharacters()
         js("refreshLook(\(quote(id)))")
+        pushSettings()   // 设置页开着（角色页的衣服卡）时高亮跟着变：按时段自动换衣服也走这里
     }
 
     @objc func rename() {

@@ -15,17 +15,16 @@ namespace CrossPet
         public static Dictionary<string, object> Parse(object obj) => ParseSummary(obj) ?? ParseStatus(obj);
 
         /// <summary>额度汇总（RetrieveUserQuotaSummary）：Antigravity 自己分好组（「Gemini Models」「Claude and GPT models」），
-        /// 每组一个或几个窗口（5h / 本周 / 今日……）。text 给关闭「合并显示」时用（每组一行）；grid 给合并显示用：
-        /// 第一行（name 为空 = 用角色自己的名字）是 Gemini 池 + 独立池（Arg）各一格，第二行「Agy C/G」是 Claude/GPT 池的各个窗口。和 macOS 版 antigravitySummary 一致</summary>
+        /// 每组一个或几个窗口（5h / 本周 / 今日……）。text 给关闭「合并显示」时用（每组一行）；
+        /// bars 是结构化的额度条（和别家的 bars 同一个格式）：每个窗口一项 {label, left, reset?, group}，同一个池的窗口挨着排，短窗口在前；
+        /// reset 是 Unix 秒，没有就不写；group 是池名。合并显示怎么排由网页层按 bars 决定。和 macOS 版 antigravitySummary 一致</summary>
         public static Dictionary<string, object> ParseSummary(object obj)
         {
             if (!(obj is Dictionary<string, object> root) || !(root.TryGetValue("response", out var r0) && r0 is Dictionary<string, object> resp)) return null;
             if (!(resp.TryGetValue("groups", out var gs) && gs is object[] groups)) return null;
             string Title(Dictionary<string, object> g) => g.TryGetValue("displayName", out var t) ? t as string ?? "" : "";
             var rows = new List<(string name, double left, DateTime? reset)>();
-            (string label, double left, DateTime? reset)? gemini = null;
-            var others = new List<(string label, double left, DateTime? reset)>();
-            var gpt = new List<(string label, double left, DateTime? reset)>();
+            var bars = new List<object>();
             string Piece((string label, double left, DateTime? reset) r)
             {
                 var piece = $"{r.label} 剩余 {(int)Math.Round(r.left * 100)}%";
@@ -60,32 +59,22 @@ namespace CrossPet
                 var five = cands.FirstOrDefault(c => c.win == "5h");
                 var pick = tightest.left > 0.1 && five.win == "5h" && five.left < 1 ? five : tightest;
                 rows.Add((cands.Count > 1 ? $"{name} {pick.window}" : name, pick.left, pick.reset));
-                // grid：Gemini 池一格（挑出来的那个窗口）；独立池一格（名字缩短：Argon → Arg）；Claude/GPT 池每个窗口一格，短窗口在前
-                if (isGemini) gemini = (pick.window, pick.left, pick.reset);
-                else if (isGpt)
+                // bars：每个窗口一项（不只是挑出来的那个），短窗口在前
+                var pool = isGemini ? "Gemini" : isGpt ? "Claude/GPT" : System.Text.RegularExpressions.Regex.Replace(title, @"^Gemini\s+(\d+\s+)?", "");
+                int Order(string win) => win == "5h" ? 0 : win == "daily" ? 1 : win == "weekly" ? 2 : 3;
+                foreach (var c in cands.OrderBy(c => Order(c.win)))
                 {
-                    int Order(string win) => win == "5h" ? 0 : win == "daily" ? 1 : win == "weekly" ? 2 : 3;
-                    gpt = cands.OrderBy(c => Order(c.win)).Select(c => (c.window, c.left, c.reset)).ToList();
-                }
-                else
-                {
-                    var shortName = title.StartsWith("Gemini ") ? title.Substring("Gemini ".Length) : title;
-                    if (shortName.ToLowerInvariant().EndsWith("argon")) shortName = "Arg";
-                    others.Add((cands.Count > 1 ? $"{shortName} {pick.window}" : shortName, pick.left, pick.reset));
+                    var bar = new Dictionary<string, object> { ["label"] = $"{pool} {c.window}", ["left"] = c.left, ["group"] = pool };
+                    if (c.reset is DateTime rd) bar["reset"] = new DateTimeOffset(rd).ToUnixTimeSeconds();
+                    bars.Add(bar);
                 }
             }
             if (rows.Count == 0) return null;
-            var grid = new List<object>();
-            var first = new List<(string label, double left, DateTime? reset)>();
-            if (gemini != null) first.Add(gemini.Value);
-            first.AddRange(others);
-            if (first.Count > 0) grid.Add(new Dictionary<string, object> { ["name"] = "", ["cells"] = first.Select(Piece).ToList() });
-            if (gpt.Count > 0) grid.Add(new Dictionary<string, object> { ["name"] = "Agy C/G", ["cells"] = gpt.Select(Piece).ToList() });
             return new Dictionary<string, object>
             {
                 ["text"] = string.Join(" ｜ ", rows.Select(r => Piece((r.name, r.left, r.reset)))),
                 ["low"] = rows.Min(r => r.left) <= 0.1,
-                ["grid"] = grid,
+                ["bars"] = bars,
             };
         }
 

@@ -36,10 +36,10 @@ check "汇总：同上，周额度排在前面结果一样" summary-tie-weekly-f
 check "汇总：5h 满了显示周额度和重置时间" summary-multi-pool 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 99% · ") and q["text"].split(" ｜ ")[2].startswith("Claude/GPT 本周 剩余 100% · ")'
 check "汇总：周额度 ≤10% 时不被 5h 盖住" summary-weekly-low 'q["text"].split(" ｜ ")[0].startswith("Gemini 本周 剩余 5% · ") and q["low"] is True'
 check "汇总：每一行都带重置时间" summary-all-50 'all(seg.endswith(" 重置") for seg in q["text"].split(" ｜ ")) and len(q["text"].split(" ｜ ")) == 3'
-# 合并显示用的结构化行 grid：第一行（名字为空）= Gemini 池 + 独立池，第二行「Agy C/G」= Claude/GPT 池的各个窗口（5h | 周）
-check "grid：Gemini 池 + Arg 一行，Agy C/G 的 5小时 | 本周 另一行" summary-multi-pool 'q["grid"][0]["name"] == "" and q["grid"][0]["cells"][0].startswith("本周 剩余 99% · ") and q["grid"][0]["cells"][1].startswith("Arg 剩余 46% · ") and q["grid"][1]["name"] == "Agy C/G" and [c.split(" 剩余")[0] for c in q["grid"][1]["cells"]] == ["5小时", "本周"] and all(c.endswith(" 重置") for r in q["grid"] for c in r["cells"])'
-check "grid：没有 Argon 时第一行只有 Gemini 池一格" summary-two-windows 'len(q["grid"]) == 2 and q["grid"][0]["cells"][0].startswith("今日 剩余 40% · ") and len(q["grid"][0]["cells"]) == 1 and len(q["grid"][1]["cells"]) == 1'
-check "grid：全部用完都是 0%，C/G 的窗口短的在前" summary-all-used-up '[c.split(" 剩余 ")[1].split("%")[0] for r in q["grid"] for c in r["cells"]] == ["0"] * 4 and [c.split(" 剩余")[0] for c in q["grid"][1]["cells"]] == ["5小时", "本周"]'
-check "grid：text 不变（关闭合并显示时照旧一组一行）" summary-multi-pool 'len(q["text"].split(" ｜ ")) == 3'
+# 合并显示用的结构化额度条 bars：每个窗口一项 {label, left, reset?, group}，同一个池的窗口挨着排（短窗口在前）；排版（Gemini + Arg 一行、Agy C/G 另起一行）在网页层
+check "bars：每个窗口一项，label = 池名 + 窗口名，同一个池挨着排" summary-multi-pool '[b["label"] for b in q["bars"]] == ["Gemini 5小时", "Gemini 本周", "Argon 本周", "Claude/GPT 5小时", "Claude/GPT 本周"] and [b["group"] for b in q["bars"]] == ["Gemini", "Gemini", "Argon", "Claude/GPT", "Claude/GPT"] and [b["left"] for b in q["bars"]] == [1, 0.99, 0.46, 1, 1] and all(isinstance(b["reset"], int) and b["reset"] > 1.7e9 for b in q["bars"])'
+check "bars：窗口名按接口的窗口 id（今日 / 本周），没有 Argon 时只有两个池" summary-two-windows '[b["label"] for b in q["bars"]] == ["Gemini 今日", "Gemini 本周", "Claude/GPT 本周"]'
+check "bars：全部用完（比例被省略）= left 0，每项都带 reset" summary-all-used-up 'len(q["bars"]) == 5 and all(b["left"] == 0 and "reset" in b for b in q["bars"])'
+check "bars：没有重置时间就不写 reset 字段" summary-no-reset 'q["bars"] == [{"label": "Gemini 本周", "left": 0.7, "group": "Gemini"}]'
 check "汇总是空的：不显示（程序会退回查用户状态）" summary-empty 'q == {}'
 exit $fail

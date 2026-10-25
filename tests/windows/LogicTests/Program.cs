@@ -49,11 +49,11 @@ static class Program
             var q = AntigravityQuota.Parse(Js(JsonDocument.Parse(File.ReadAllText(path)).RootElement));
             return q == null ? "null" : q["text"] + " | low=" + q["low"];
         }
-        string AgyGrid(string name)
+        string AgyBars(string name)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "../../../../../fixtures/antigravity", name + ".json");
             var q = AntigravityQuota.Parse(Js(JsonDocument.Parse(File.ReadAllText(path)).RootElement));
-            return q == null || !q.ContainsKey("grid") ? "null" : JsonSerializer.Serialize(q["grid"], new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            return q == null || !q.ContainsKey("bars") ? "null" : JsonSerializer.Serialize(q["bars"], new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         }
         var a1 = Agy("ultra-only-model");
         Check("Gemini：不可用的模型不算进额度（" + a1 + "）", a1.StartsWith("Gemini 剩余 100%") && a1.Contains(" ｜ Claude/GPT 剩余 100% |") && a1.EndsWith("low=False"));
@@ -78,12 +78,13 @@ static class Program
         Check("Gemini 汇总：周额度 ≤10% 不被 5h 盖住（" + s8 + "）", s8.StartsWith("Gemini 本周 剩余 5% · ") && s8.EndsWith("low=True"));
         var s9 = Agy("summary-all-50");
         Check("Gemini 汇总：每一行都带重置时间（" + s9 + "）", s9.Split(new[] { " ｜ " }, StringSplitOptions.None).Length == 3 && s9.Split(new[] { " ｜ " }, StringSplitOptions.None).All(seg => seg.Contains(" 重置")));
-        var g1 = AgyGrid("summary-multi-pool");
-        Check("Gemini grid：Gemini 池 + Arg 一行，Agy C/G 的 5小时 | 本周 另一行（" + g1 + "）",
-            g1.StartsWith("[{\"name\":\"\",\"cells\":[\"本周 剩余 99% · ") && g1.Contains("\"Arg 剩余 46% · ") && g1.Contains("{\"name\":\"Agy C/G\",\"cells\":[\"5小时 剩余 100% · ") && g1.Contains("\"本周 剩余 100% · "));
-        var g2 = AgyGrid("summary-two-windows");
-        Check("Gemini grid：没有 Argon 时第一行只有 Gemini 池一格（" + g2 + "）", g2.StartsWith("[{\"name\":\"\",\"cells\":[\"今日 剩余 40% · ") && g2.Split(new[] { "Agy C/G" }, StringSplitOptions.None).Length == 2);
-        Check("Gemini grid：旧接口（用户状态）没有 grid", AgyGrid("two-pools-with-unavailable") == "null");
+        var g1 = AgyBars("summary-multi-pool");
+        Check("Gemini bars：每个窗口一项，池名 + 窗口名，同一个池挨着排（" + g1 + "）",
+            g1.IndexOf("\"label\":\"Gemini 5小时\"") < g1.IndexOf("\"label\":\"Gemini 本周\"") && g1.IndexOf("\"label\":\"Gemini 本周\"") < g1.IndexOf("\"label\":\"Argon 本周\"")
+            && g1.IndexOf("\"label\":\"Argon 本周\"") < g1.IndexOf("\"label\":\"Claude/GPT 5小时\"") && g1.Contains("\"group\":\"Argon\"") && g1.Split(new[] { "\"label\"" }, StringSplitOptions.None).Length == 6 && g1.Contains("\"reset\":17"));
+        var g2 = AgyBars("summary-no-reset");
+        Check("Gemini bars：没有重置时间就不写 reset（" + g2 + "）", g2 == "[{\"label\":\"Gemini 本周\",\"left\":0.7,\"group\":\"Gemini\"}]");
+        Check("Gemini bars：旧接口（用户状态）没有 bars", AgyBars("two-pools-with-unavailable") == "null");
         Check("Gemini 汇总：空的不显示", Agy("summary-empty") == "null");
 
         // 网页大小核对（只记日志不修正）：量两次、两次一致且和画布差 2% 以上才算对不上——拖滑块时网页还没排完，量到的是半路的数

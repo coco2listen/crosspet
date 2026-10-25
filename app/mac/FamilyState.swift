@@ -74,6 +74,23 @@ struct FamilyAggregate {
     let payload: [String: Any]
 }
 
+/// A valid snapshot may only update origin diagnostics or be older than the current state.
+/// Such a file is safe to cache until its mtime changes; invalid/incomplete writes must retry.
+enum FamilyIngestResult {
+    case invalid
+    case ignored
+    case applied(FamilySnapshot)
+
+    var cacheable: Bool {
+        if case .invalid = self { return false }
+        return true
+    }
+    var appliedSnapshot: FamilySnapshot? {
+        if case let .applied(snapshot) = self { return snapshot }
+        return nil
+    }
+}
+
 /// One instance per pet. Called on the UI thread; producers atomically replace independent session files.
 final class FamilyState {
     static let sourceFamilies = ["claude-code": "claude", "codex": "gpt", "deepseek-harness": "deepseek"]
@@ -108,32 +125,35 @@ final class FamilyState {
     }
 
     @discardableResult
-    func ingest(_ data: Data) -> Bool {
+    func ingest(_ data: Data) -> Bool { ingestResult(data).appliedSnapshot != nil }
+
+    @discardableResult
+    func ingestResult(_ data: Data) -> FamilyIngestResult {
         guard let next = try? JSONDecoder().decode(FamilySnapshot.self, from: data),
               next.schema == 1, next.family == family,
               Self.sourceFamilies[next.source] == family,
               ["tui", "desktop", "unknown"].contains(next.client),
               !next.sessionId.isEmpty, Self.priority[next.status] != nil,
               next.ts.isFinite, next.observedAt.isFinite,
-              next.ts > 0, next.observedAt > 0 else { return false }
+              next.ts > 0, next.observedAt > 0 else { return .invalid }
         // Validate before recording diagnostics, including snapshots for the other pet.
-        if next.status == "Success", !["Stop", "AfterAgent", "turn/end"].contains(next.event) { return false }
+        if next.status == "Success", !["Stop", "AfterAgent", "turn/end"].contains(next.event) { return .invalid }
         if next.client != "unknown" { knownClients[next.originKey, default: []].insert(next.client) }
         if next.client == "unknown" {
             if let previous = unknownRecords[next.key] {
                 if follows(next, previous) { unknownRecords[next.key] = next }
             } else { unknownRecords[next.key] = next }
         }
-        if let client, next.client != client { return false }
+        if let client, next.client != client { return .ignored }
         let key = next.key
         if let previous = records[key] {
-            guard follows(next, previous) else { return false }
+            guard follows(next, previous) else { return .ignored }
             let sameProducer = next.producerId == previous.producerId
             // Sequence numbers from a restarted producer have no relationship to the old process.
             if !sameProducer { closedTurns[key] = nil }
         }
         if let turn = next.turnId, !turn.isEmpty,
-           closedTurns[key]?.contains(turn) == true, next.status != "Offline" { return false }
+           closedTurns[key]?.contains(turn) == true, next.status != "Offline" { return .ignored }
         records[key] = next
         if let turn = next.turnId, !turn.isEmpty,
            next.status == "Success" || next.status == "Offline" ||
@@ -142,7 +162,7 @@ final class FamilyState {
             if !finished.contains(turn) { finished.append(turn) }
             closedTurns[key] = Array(finished.suffix(32))
         }
-        return true
+        return .applied(next)
     }
 
     /// Only invoke after observing the recorded producer exit, never after a quiet interval.

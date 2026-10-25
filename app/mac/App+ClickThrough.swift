@@ -8,6 +8,7 @@ extension App {
     // 窗口比桌宠大（给动作、气泡留的空间）：鼠标不在桌宠本体、气泡、名牌、额度上时让窗口不接鼠标，点击落到后面的窗口
 
     func updateClickThrough() {
+        guard let panel, let web else { return }
         if !activeInMode || userHidden || hiddenForFullscreen || hiddenForAppearance {   // 收着：透明的窗口不能接鼠标（下面会按命中区域反复切换，这里先拦住）
             if !panel.ignoresMouseEvents { panel.ignoresMouseEvents = true }
             return
@@ -19,9 +20,9 @@ extension App {
         if Date().timeIntervalSince(hitRectsAt) > (dock != nil ? 0.08 : 0.25) {
             hitRectsAt = Date()
             web.evaluateJavaScript("hitRects()") { [weak self] r, _ in
-                guard let text = r as? String, let data = text.data(using: .utf8),
+                guard let self, self.web === web, let text = r as? String, let data = text.data(using: .utf8),
                       let list = try? JSONSerialization.jsonObject(with: data) as? [[Double]] else { return }
-                self?.hitRects = list.filter { $0.count == 4 }.map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
+                self.hitRects = list.filter { $0.count == 4 }.map { CGRect(x: $0[0], y: $0[1], width: $0[2], height: $0[3]) }
             }
         }
         let zoom = f.width / pageSize.width   // 网页像素 → 屏幕点（画布可能因为文字大小比 260 宽）
@@ -33,6 +34,7 @@ extension App {
 
     /// 降到普通层级后还排在所有普通窗口最前面、压在你正在用的窗口上：挪到前台程序最前面那个窗口的后面
     func orderBelowFrontWindow() {
+        guard let panel else { return }
         guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier, pid != ProcessInfo.processInfo.processIdentifier,
               let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]],
               let front = list.first(where: { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }),
@@ -42,6 +44,7 @@ extension App {
 
     /// 桌宠中间那块有没有被别的普通窗口挡住（只看窗口位置和层级，不需要录屏权限）
     func isCovered() -> Bool {
+        guard let panel else { return false }
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow, .excludeDesktopElements],
                                                     CGWindowID(panel.windowNumber)) as? [[String: Any]] else { return false }
         let screenTop = NSScreen.screens.first?.frame.maxY ?? 0
@@ -65,6 +68,7 @@ extension App {
     /// 不 orderOut：退出全屏程序的那一刻窗口如果是摘下来的，「所有桌面都显示」就失效了，
     /// 之后再放回来也只在退出全屏的那个桌面有她（isOnActiveSpace 为 false，别的桌面上右键也没反应）
     func applyHiddenState() {
+        guard let panel else { return }
         let hidden = !activeInMode || userHidden || hiddenForFullscreen || hiddenForAppearance
         panel.alphaValue = hidden ? 0 : 1
         if hidden { panel.ignoresMouseEvents = true }
@@ -73,6 +77,7 @@ extension App {
 
     /// 一直允许出现在全屏程序的空间里：AI 程序（Codex、Claude……）全屏时要照常显示，别的程序全屏时由 checkFullscreen 藏起来
     func applyFullscreenBehavior() {
+        guard let panel else { return }
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         checkFullscreen()
     }
@@ -81,6 +86,7 @@ extension App {
     // 所以自己看：桌宠所在的那块屏幕上，前台程序有没有一个盖满整块屏幕的窗口（全屏程序、全屏视频、演示）。
     // 有就收起来，退出全屏再放回来。只看窗口位置和大小，不需要录屏权限；每秒看一次，切换空间 / 前台程序时马上看
     func checkFullscreen() {
+        guard let panel else { return }
         fullscreenCheckedAt = Date()
         if userHidden { return }   // 你用快捷键藏起来的：全屏规则不管她
         // 全屏的是 AI 程序（专心和 AI 干活）：照常显示；看视频、演示、玩游戏才藏

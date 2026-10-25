@@ -46,6 +46,7 @@ extension App {
 
     /// 改大小：窗口 = 画布 × 人物大小，网页按人物大小缩放；放在哪见 Anchor
     func applyScale(_ scale: CGFloat, anchor: Anchor = .bottom) {
+        guard let panel, let web else { return }
         let size = NSSize(width: pageSize.width * scale, height: pageSize.height * scale)
         let f = Self.placeWindow(old: panel.frame, size: size, oldFoot: shownFootPt, newFoot: pageFoot * scale, anchor: anchor,
                                  visibleMinY: (panel.screen ?? NSScreen.main)?.visibleFrame.minY)
@@ -58,16 +59,17 @@ extension App {
     /// 人物大小 / 文字大小变了：交给网页算画布（规则在 app/web/text-size.js），按回来的尺寸设窗口。
     /// target：人物大小要动画到哪（底边不动）；nil = 文字变了（anchor .feet）或网页刚加载完（.corner），按现在的人物大小重设一次
     func applySizes(animateTo target: CGFloat? = nil, anchor: Anchor = .feet) {
+        guard let panel, let web else { return }
         if shownFootPt == 0 { shownFootPt = pageFoot * panel.frame.width / pageSize.width }   // 还没按画布设过：按现在的窗口算
         let finish = { [weak self] in
-            guard let self else { return }
+            guard let self, self.panel != nil, self.web === web else { return }
             if let t = target { self.animateScale(to: t); return }
             self.applyScale(self.shownScale > 0 ? self.shownScale : self.petScale, anchor: anchor)
             if anchor == .feet, self.dock != nil { self.applyDock() }   // 贴着边时改了文字：窗口变宽了，重新对齐屏幕边
         }
         guard ready else { finish(); return }   // 网页还没加载完：先按旧画布，加载完（didFinish）会再调一次
         web.evaluateJavaScript("setSizes(\(Double(target ?? petScale)), \(textScale), \(textLinked))") { [weak self] r, _ in
-            guard let self else { return }
+            guard let self, self.panel != nil, self.web === web else { return }
             if let text = r as? String, let data = text.data(using: .utf8),
                let o = try? JSONSerialization.jsonObject(with: data) as? [String: Double],
                let w = o["w"], let h = o["h"], let foot = o["foot"] {
@@ -82,6 +84,7 @@ extension App {
 
     /// 拖滑块时每次只变一点，直接跟手；一下子变很多（点「还原」）时用 0.2 秒过渡过去
     func animateScale(to target: CGFloat) {
+        guard panel != nil else { return }
         scaleTimer?.invalidate()
         let from = shownScale > 0 ? shownScale : petScale
         guard abs(target - from) > 0.06 else { shownScale = target; applyScale(target); return }

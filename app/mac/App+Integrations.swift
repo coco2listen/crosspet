@@ -163,18 +163,18 @@ extension App {
     }
 
     /// 所有已打开的设置页一起刷新：接入状态、心跳是全局的，哪只宠的设置页都要看到同一份
-    func pushSettings() { allPets.forEach { $0.pushOwnSettings() } }
+    func pushSettings() { allControllers.forEach { $0.pushOwnSettings() } }
     func pushOwnSettings() {
         guard settingsWeb != nil else { return }
-        // 当前角色以桌宠页面里正在演的为准（启动时外壳会先从 UserDefaults 恢复上次的角色，见 didFinish）
-        web.evaluateJavaScript("charId") { [weak self] r, _ in
-            guard let self, let v = self.settingsWeb else { return }
-            // 只在还不知道当前角色时（刚启动、没存过上次的角色）问页面；换角色有 0.33 秒过渡，过渡中页面里还是旧角色
-            if self.currentId == nil, let id = r as? String, self.characterIds.contains(id) { self.currentId = id }
+        let push: (Any?) -> Void = { [weak self] result in
+            guard let self, let target = self.settingsWeb else { return }
+            if self.currentId == nil, let id = result as? String, self.characterIds.contains(id) { self.currentId = id }
             guard let data = try? JSONSerialization.data(withJSONObject: self.settingsState()),
                   let text = String(data: data, encoding: .utf8) else { return }
-            v.evaluateJavaScript("setState(\(text))", completionHandler: nil)
+            target.evaluateJavaScript("setState(\(text))", completionHandler: nil)
         }
+        guard let web else { push(nil); return }
+        web.evaluateJavaScript("charId") { result, _ in push(result) }
     }
 
     func handleSettings(_ body: Any) {

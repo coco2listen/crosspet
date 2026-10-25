@@ -47,7 +47,7 @@ extension App {
         case "pet":       // 在桌宠页面里执行一段代码（控制台自己的页面发来的，只在本机）
             if let code = msg["code"] as? String { js(code) }
         case "status":    // 读桌宠当前状态，回给控制台
-            web.evaluateJavaScript("JSON.stringify(devStatus())") { [weak self] r, _ in
+            web?.evaluateJavaScript("JSON.stringify(devStatus())") { [weak self] r, _ in
                 if let text = r as? String { self?.devJS("onPetStatus(\(text))") }
             }
         case "pause":
@@ -61,7 +61,7 @@ extension App {
         case "reveal":
             NSWorkspace.shared.activateFileViewerSelecting([feedbackURL])
         case "reload":
-            web.reload()
+            web?.reload()
         default:
             break
         }

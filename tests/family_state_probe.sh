@@ -120,6 +120,13 @@ check(diagnosticOrder.aggregate(now: 1002).payload["unattributed"] == nil, "olde
 let interruptedUnknown = FamilyState(family: "claude", client: "desktop")
 _ = interruptedUnknown.ingest(diagnostic(["status": "Idle", "event": "Stop", "pose": "surprised"]))
 check(interruptedUnknown.aggregate(now: 1001).payload["unattributed"] == nil, "interrupted or compacted unknown turn no longer warned")
+let classified = FamilyState(family: "claude", client: "tui")
+check(!classified.ingestResult(Data("{".utf8)).cacheable, "incomplete JSON remains retryable")
+check(!classified.ingestResult(snapshot(["schema": 2])).cacheable, "invalid schema remains retryable")
+check(classified.ingestResult(claude("desktop", "foreign-valid")).cacheable && classified.records.isEmpty, "valid other client can cache without routing")
+check(classified.ingestResult(claude("unknown", "unknown-valid")).cacheable && classified.aggregate(now: 1000).payload["unattributed"] as? Int == 1, "valid unknown can cache after diagnostics update")
+check(classified.ingestResult(claude("tui", "own-valid")).appliedSnapshot != nil, "applied result carries the already decoded snapshot")
+check(classified.ingestResult(claude("tui", "own-valid")).cacheable, "unchanged duplicate is cacheable")
 print("FamilyState: \(checks) checks passed")
 SWIFT
 swiftc app/mac/FamilyState.swift "$scratch/main.swift" -o "$scratch/family-state-probe"

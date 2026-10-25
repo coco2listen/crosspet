@@ -162,6 +162,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     func createPetWindow() {
+        guard panel == nil else { return }
+        ready = false
 
         let size = NSSize(width: Self.baseSize.width * petScale, height: Self.baseSize.height * petScale)
         var origin = NSPoint.zero
@@ -200,7 +202,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             let z = max(self.web.pageZoom, 0.01)
             self.js(String(format: "handleClick('pat', %.1f, %.1f)", p.x / z, (drag.bounds.height - p.y) / z))
         }
-        drag.onMenu = { [weak self] e in self?.showMenu(e, in: drag) }
+        drag.onMenu = { [weak self, weak drag] e in
+            guard let drag else { return }
+            self?.showMenu(e, in: drag)
+        }
         drag.onDragStart = { [weak self] in self?.undock() }
         drag.onDragEnd = { [weak self] in self?.checkDock() }
         drag.onShake = { [weak self] in self?.js("shaken()") }
@@ -226,7 +231,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let ws = NSWorkspace.shared.notificationCenter
         for (name, asleep) in [(NSWorkspace.screensDidSleepNotification, true), (NSWorkspace.screensDidWakeNotification, false),
                                (NSWorkspace.sessionDidResignActiveNotification, true), (NSWorkspace.sessionDidBecomeActiveNotification, false)] {
-            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.allPets.forEach { $0.screensAsleep = asleep; $0.updatePageHidden() } }
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.allControllers.forEach { $0.screensAsleep = asleep; $0.updatePageHidden() } }
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.pollStates() } }
         Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.updateClickThrough() } }

@@ -50,7 +50,7 @@ extension App {
         js("setTucked(null)")
     }
     func checkDock() {
-        guard edgeDockEnabled, let screen = panel.screen ?? NSScreen.main else { return }
+        guard let panel, edgeDockEnabled, let screen = panel.screen ?? NSScreen.main else { return }
         let f = panel.frame, vf = screen.visibleFrame, reach = f.width * (Self.baseSize.width / pageSize.width) * 0.3   // 按人物那块的宽算：画布因为文字变宽时不该更容易贴边
         func neighbor(_ left: Bool) -> Bool {
             NSScreen.screens.contains { s in s != screen && s.frame.minY < f.maxY && s.frame.maxY > f.minY &&
@@ -86,7 +86,7 @@ extension App {
         if busy != dockOut { dockOut = busy; dockHover = false; applyDock() }
     }
     func applyDock() {
-        guard let side = dock, let screen = panel.screen ?? NSScreen.main else { return }
+        guard let panel, let side = dock, let screen = panel.screen ?? NSScreen.main else { return }
         hitRects = []; hitRectsAt = .distantPast   // 换了样子，可点区域重新量（旧的范围会让她误以为鼠标在身上，来回闪）
         let vf = screen.visibleFrame
         var f = panel.frame
@@ -111,7 +111,7 @@ extension App {
     }
     /// 缩进去（或换成探出来那张），按切口位置对齐屏幕边缘。有贴边立绘时切口就是窗口边，窗口不用再动
     func tuck(_ side: String, _ vf: NSRect) {
-        guard dock == side, !dockOut else { return }
+        guard let panel, let web, dock == side, !dockOut else { return }
         dockTucked = true
         var f = panel.frame
         // 鼠标移上来：换成探出来更多的那张（edge_*_peek），切口照样对齐屏幕边缘（不能光把窗口往外挪，切口会露在屏幕中间）
@@ -119,7 +119,7 @@ extension App {
         js("setTucked(\(quote(side)), \(peek))")
         let key = side + (peek ? "-peek" : "") + currentIdKey
         let place = { [weak self] (cut: Double) in
-            guard let self, self.dock == side, !self.dockOut, self.dockHover == peek else { return }
+            guard let self, self.panel === panel, self.web === web, self.dock == side, !self.dockOut, self.dockHover == peek else { return }
             let zoom = f.width / self.pageSize.width
             f.origin.x = side == "left" ? vf.minX - CGFloat(cut) * zoom : vf.maxX - CGFloat(cut) * zoom
             if abs(f.origin.x - self.panel.frame.origin.x) > 1 { self.slide(to: f) }
@@ -127,16 +127,17 @@ extension App {
         if let cut = dockCut[key] { place(cut); return }
         // 换成贴边立绘后再量切口（图要先载入），量过的记下来
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            guard let self, self.dock == side, !self.dockOut, self.dockHover == peek else { return }
+            guard let self, self.panel === panel, self.web === web, self.dock == side, !self.dockOut, self.dockHover == peek else { return }
             self.web.evaluateJavaScript("dockCut(\(self.quote(side)))") { [weak self] r, _ in
-                guard let cut = (r as? NSNumber)?.doubleValue else { return }
-                self?.dockCut[key] = cut
+                guard let self, self.panel === panel, self.web === web, let cut = (r as? NSNumber)?.doubleValue else { return }
+                self.dockCut[key] = cut
                 place(cut)
             }
         }
     }
     var currentIdKey: String { currentId ?? "" }
     func slide(to frame: NSRect) {
+        guard let panel else { return }
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.35
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)

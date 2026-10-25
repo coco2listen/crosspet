@@ -3,9 +3,10 @@ import WebKit
 
 extension App {
     var owner: App { coordinator ?? self }
-    var allPets: [App] { ([owner] + owner.familyPets).filter { $0.panel != nil } }
+    var allControllers: [App] { [owner] + owner.familyPets }
+    var allPets: [App] { allControllers.filter { $0.panel != nil } }
     var activePets: [App] { allPets.filter { $0.activeInMode } }
-    var menuPet: App { activePets.first ?? owner.familyPets.first ?? owner }
+    var menuPet: App { activePets.first ?? owner }
 
     /// Five independent client pets. `family` selects the character and the producer directory; `client` the proven origin.
     static let petSpecs: [(id: String, family: String, client: String?, title: String)] = [
@@ -29,7 +30,7 @@ extension App {
         applyPetMode()
     }
 
-    /// Windows of both group modes are created once and then shown or hidden, so switching modes never loses a pet's state.
+    /// Create controllers lazily by mode; only enabled pets allocate a window.
     func createFamilyWindows() {
         let missing = (Self.familySpecs + Self.petSpecs).filter { spec in
             (petMode == "clients") == (spec.client != nil) && !familyPets.contains { $0.petId == spec.id }
@@ -37,22 +38,31 @@ extension App {
         for spec in missing {
             let pet = App(family: spec.family, client: spec.client, petId: spec.id)
             pet.coordinator = self
+            pet.screensAsleep = screensAsleep
             pet.latestRelease = latestRelease
             familyPets.append(pet)
-            pet.createPetWindow()
             pet.userHidden = pet.defaults.bool(forKey: "hidden")
         }
     }
 
     func applyPetMode() {
-        if familiesMode { owner.createFamilyWindows() }
-        else if owner.panel == nil { owner.createPetWindow() }
-        for pet in allPets {
+        if owner !== self { owner.applyPetMode(); return }
+        if familiesMode { createFamilyWindows() }
+        for pet in allControllers {
             pet.activeInMode = pet.family == nil ? !familiesMode : (pet.client != nil) == (petMode == "clients") && familiesMode && (pet.defaults.object(forKey: "enabled") as? Bool ?? true)
-            pet.applyHiddenState()
-            if pet.activeInMode { pet.panel.orderFrontRegardless(); pet.stamps = [:] }
-            else { pet.panel.orderOut(nil) }
+            if pet.activeInMode {
+                if pet.panel == nil { pet.createPetWindow() }
+                pet.applyHiddenState()
+                pet.panel.orderFrontRegardless()
+            } else { pet.releasePetWindow() }
         }
+        // The tray's fallback menu still needs one real view when all pets are disabled.
+        if activePets.isEmpty {
+            owner.activeInMode = false
+            if owner.panel == nil { owner.createPetWindow() }
+            owner.applyHiddenState(); owner.panel.orderOut(nil)
+        }
+        refreshAppearance()
     }
 
     @objc func changePetMode(_ sender: NSMenuItem) {
@@ -123,14 +133,13 @@ extension App {
         for file in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] where file.pathExtension == "json" {
             guard let stamp = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
                   stamp != stamps[file.path], let data = try? Data(contentsOf: file) else { continue }
-            // Retry malformed/incomplete files; producers normally use atomic rename.
-            if state.ingest(data) {
-                stamps[file.path] = stamp
-                if family == "gpt", let snapshot = try? JSONDecoder().decode(FamilySnapshot.self, from: data) {
-                    if ["Stop", "AfterAgent", "turn/end"].contains(snapshot.event) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refreshCodexQuota(.turnEnd) }
-                    }
-                }
+            // Cache validated files even when they belong to the other client or are old/duplicate.
+            // Invalid/incomplete writes keep retrying; aggregate deadlines still run every poll.
+            let result = state.ingestResult(data)
+            if result.cacheable { stamps[file.path] = stamp }
+            if family == "gpt", let snapshot = result.appliedSnapshot,
+               ["Stop", "AfterAgent", "turn/end"].contains(snapshot.event) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refreshCodexQuota(.turnEnd) }
             }
         }
         for (key, record) in state.records {
@@ -169,7 +178,7 @@ extension App {
                     self.appendRenderEvidence(row, to: trace)
                     if aggregate.payload["lastResult"] != nil, ["Offline", "Idle"].contains(aggregate.status) {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                            self?.web.evaluateJavaScript("JSON.stringify({charId,renderedPose:pose,badge:document.getElementById('familyStatus')?.textContent})") { view, _ in
+                            self?.web?.evaluateJavaScript("JSON.stringify({charId,renderedPose:pose,badge:document.getElementById('familyStatus')?.textContent})") { view, _ in
                                 guard let self, let view = view as? String, let data = view.data(using: .utf8),
                                       var evidence = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                                 evidence["family"] = family; evidence["kind"] = "result-animation-after-dwell"

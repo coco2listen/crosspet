@@ -230,6 +230,7 @@ extension App {
             devJS("setAppInfo(\(data)); boot(\(manifestJSON))")
             return
         }
+        guard webView === web else { return }
         ready = true
         if let family { js("setFamilyMode(\(quote(family)))") }
         loadCharacters()
@@ -240,7 +241,10 @@ extension App {
             js("setCharacter(\(quote(saved)), true)")
         }
         if let side = defaults.string(forKey: "dock"), edgeDockEnabled {   // 上次是贴着边的
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.setDock(side) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak webView] in
+                guard let self, let webView, self.web === webView, self.defaults.string(forKey: "dock") == side else { return }
+                self.setDock(side)
+            }
         }
         js("setAuraMode(\(quote(auraMode))); setShowName(\(showName)); setEggsEnabled(\(eggsEnabled)); setPowerSave(\(powerSave)); setQuotaAggregate(\(quotaAggregate)); setCodexResets(\(codexResets)); setPeakStyle(\(quote(peakStyle))); setPeakSkins(\(peakSkinsJSON))")
         applySizes(anchor: .corner)   // 解锁过文字大小的：按画布重设窗口，左下角不动（锁着的尺寸不变）

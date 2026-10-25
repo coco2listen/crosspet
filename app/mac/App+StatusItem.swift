@@ -37,9 +37,10 @@ extension App {
 
     /// 叫到最前面：在当前屏幕看不见（被拖出屏幕、换了显示器）就先回到右下角
     @objc func bringToFront() {
+        if family != nil { defaults.set(true, forKey: "enabled"); owner.applyPetMode() }
+        guard let panel else { return }
         let visible = NSScreen.screens.contains { $0.visibleFrame.intersects(panel.frame.insetBy(dx: 40, dy: 40)) }
         if !visible { resetPosition() }
-        if family != nil { defaults.set(true, forKey: "enabled"); owner.applyPetMode() }
         userHidden = false
         fullscreenOverride = true; hiddenForFullscreen = false   // 你主动叫她：全屏时也出来（切换空间 / 前台程序后再按规则收起来）
         panel.orderFrontRegardless()
@@ -122,8 +123,9 @@ extension App {
     }
 
     @objc func openCharacters() { NSWorkspace.shared.open(charactersDir) }
-    @objc func reload() { web.reload() }
+    @objc func reload() { web?.reload() }
     @objc func resetPosition() {
+        guard let panel else { return }
         undock()
         guard let screen = NSScreen.main?.visibleFrame else { return }
         panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 40, y: screen.minY + 100))

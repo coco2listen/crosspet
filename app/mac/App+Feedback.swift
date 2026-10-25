@@ -91,11 +91,13 @@ extension App {
         var L: [String] = []
         let front = NSWorkspace.shared.frontmostApplication
         L.append("前台程序 \(front?.localizedName ?? "-")（\(front?.bundleIdentifier ?? "-")）")
-        let f = panel.frame
-        let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(f.insetBy(dx: 40, dy: 40)) }
-        L.append("窗口 \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height))\(onScreen ? "" : "（不在任何屏幕里）")；"
-                 + "显示中 \(panel.isVisible ? "是" : "否")，没被挡住 \(panel.occlusionState.contains(.visible) ? "是" : "否")，因全屏收着 \(hiddenForFullscreen ? "是" : "否")，快捷键藏着 \(userHidden ? "是" : "否")，透明度 \(panel.alphaValue)；"
-                 + "层级 \(layerMode)（现在\(panel.level == .floating ? "置顶" : "普通")）；贴边 \(dock ?? "无")\(dock != nil ? (dockOut ? "·跑出来了" : "·缩着") : "")；大小 \(Int(petScale * 100))%")
+        if let panel {
+            let f = panel.frame
+            let onScreen = NSScreen.screens.contains { $0.visibleFrame.intersects(f.insetBy(dx: 40, dy: 40)) }
+            L.append("窗口 \(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height))\(onScreen ? "" : "（不在任何屏幕里）")；"
+                     + "显示中 \(panel.isVisible ? "是" : "否")，没被挡住 \(panel.occlusionState.contains(.visible) ? "是" : "否")，因全屏收着 \(hiddenForFullscreen ? "是" : "否")，快捷键藏着 \(userHidden ? "是" : "否")，透明度 \(panel.alphaValue)；"
+                     + "层级 \(layerMode)（现在\(panel.level == .floating ? "置顶" : "普通")）；贴边 \(dock ?? "无")\(dock != nil ? (dockOut ? "·跑出来了" : "·缩着") : "")；大小 \(Int(petScale * 100))%")
+        } else { L.append("窗口未创建（桌宠未启用或已切换模式）；大小 \(Int(petScale * 100))%") }
         let skins = (defaults.dictionary(forKey: "skins") as? [String: String]) ?? [:]
         L.append("角色 \(currentId ?? "-")\(skins.isEmpty ? "" : "，衣服 \(skins)")；设置：名字 \(showName ? "开" : "关")，光晕 \(auraMode)，省电 \(powerSave ? "开" : "关")，彩蛋 \(eggsEnabled ? "开" : "关")，"
                  + "跟随前台 \(followApps ? "开" : "关")，跟随事件 \(followEvents ? "开" : "关")，AI 干活自动出现 \(aiAutostart ? "开" : "关")，贴边 \(edgeDockEnabled ? "开" : "关")，"
@@ -121,7 +123,7 @@ extension App {
             if i > 0 {
                 where_ = f.minX >= main.frame.maxX - 1 ? "右侧" : f.maxX <= main.frame.minX + 1 ? "左侧" : f.minY >= main.frame.maxY - 1 ? "上方" : f.maxY <= main.frame.minY + 1 ? "下方" : "重叠"
             }
-            let here = panel.screen == s ? "（桌宠在这）" : ""
+            let here = panel?.screen == s ? "（桌宠在这）" : ""
             return "\(Int(f.width))×\(Int(f.height))@\(Int(s.backingScaleFactor))x \(where_)\(here)"
         }
         var flags = ["层级 \(layerMode)", hideInFullscreen ? "全屏隐藏" : "全屏不隐藏"]

@@ -63,17 +63,32 @@ extension App {
     static let seenKeys = ["claude-hooks": "claude", "claude-mod": "claude-mod", "codex": "gpt", "deepseek": "deepseek", "gemini": "gemini",
                            "antigravity": "antigravity", "workbuddy": "workbuddy", "zcode": "zcode", "hermes": "hermes", "qwen": "qwen"]
     var lastSeen: [String: Double] {
-        get { (defaults.dictionary(forKey: "seen") as? [String: Double]) ?? [:] }
-        set { defaults.set(newValue, forKey: "seen") }
+        get { (appPreferences.dictionary(forKey: "seen") as? [String: Double]) ?? [:] }
+        set { appPreferences.set(newValue, forKey: "seen") }
+    }
+    /// 升级前每只宠各存一份 seen：取各域里最新的合并到共享处一次，旧键原样保留（可回退）
+    func migrateSeen() {
+        var merged = lastSeen
+        let suites = ["claude", "gpt", "deepseek"].map { "\(preferenceDomain).pet.\($0)" } + Self.petIds.map { "\(preferenceDomain).pet.\($0)" }
+        for suite in suites {
+            for (key, ts) in (UserDefaults(suiteName: suite)?.dictionary(forKey: "seen") as? [String: Double]) ?? [:] where ts > (merged[key] ?? 0) { merged[key] = ts }
+        }
+        if merged != lastSeen { lastSeen = merged }
+    }
+    /// Older mods JSON-encoded the timestamp as a string; accept both wire formats.
+    static func heartbeatTimestamp(_ text: String) -> Double? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"")))
+        guard let ts = Double(value), ts.isFinite, ts > 0 else { return nil }
+        return ts
     }
     func refreshSeen() {
         var seen = lastSeen, changed = false
         for key in Set(Self.seenKeys.values) {
             guard let text = try? String(contentsOf: stateDir.appendingPathComponent("seen-\(key)"), encoding: .utf8),
-                  let ts = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)), ts > (seen[key] ?? 0) else { continue }
+                  let ts = Self.heartbeatTimestamp(text), ts > (seen[key] ?? 0) else { continue }
             seen[key] = ts; changed = true
         }
-        if changed { lastSeen = seen; if settingsWeb != nil { pushSettings() } }
+        if changed { lastSeen = seen; pushSettings() }
     }
     static func agoText(_ ts: Double?) -> String {
         guard let ts else { return "从没收到" }
@@ -83,35 +98,36 @@ extension App {
 
     func watchClaudeConfig() {
         refreshSeen()
-        guard ready, let stamp = (try? FileManager.default.attributesOfItem(atPath: claudeSettingsURL.path))?[.modificationDate] as? Date,
-              stamp != claudeConfigStamp else { return }
-        claudeConfigStamp = stamp
-        healPending?.cancel()
+        guard !isolatedRun, allPets.contains(where: { $0.ready }), let stamp = (try? FileManager.default.attributesOfItem(atPath: claudeSettingsURL.path))?[.modificationDate] as? Date,
+              stamp != Shared.configStamp else { return }
+        Shared.configStamp = stamp
+        Shared.healPending?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.healIntegrations() }
-        healPending = work
+        Shared.healPending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
     func healIntegrations() {
-        healTimes = healTimes.filter { Date().timeIntervalSince($0) < 3600 }
-        guard healTimes.count < 6, pythonReady, integrateScript != nil else { return }
+        Shared.healTimes = Shared.healTimes.filter { Date().timeIntervalSince($0) < 3600 }
+        guard Shared.healTimes.count < 6, pythonReady, integrateScript != nil else { return }
         runIntegrate(["heal"]) { [weak self] out, code in
             guard let self, code == 0 else { return }
             let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
             let healed = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
             guard !healed.isEmpty else { return }
-            self.healTimes.append(Date())
+            Shared.healTimes.append(Date())
             NSLog("CrossPet: 接回被冲掉的接入 \(healed)")
-            self.js("configHealed()")
+            self.activePets.forEach { $0.js("configHealed()") }
             self.refreshIntegrated()
         }
     }
 
-    func refreshIntegrated() {
-        runIntegrate(["installed"]) { [weak self] out, code in
+    func refreshIntegrated(then: (() -> Void)? = nil) {
+        runIntegrate(["installed"]) { [weak self] out, _ in
             guard let self else { return }
             let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
-            self.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
+            Shared.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
             self.pushSettings()
+            then?()
         }
         refreshPlugins()
     }
@@ -123,8 +139,8 @@ extension App {
             guard let self, code == 0, let last = out.split(separator: "\n").last.map(String.init),
                   (try? JSONSerialization.jsonObject(with: Data(last.utf8))) is [Any] else { return }
             DispatchQueue.main.async {
-                self.pluginStatus = last
-                if tellPet { self.js("setPluginUpdates(\(last))") }
+                Shared.pluginStatus = last
+                if tellPet { self.activePets.forEach { $0.js("setPluginUpdates(\(last))") } }
                 self.pushSettings()
             }
         }
@@ -146,7 +162,9 @@ extension App {
         }
     }
 
-    func pushSettings() {
+    /// 所有已打开的设置页一起刷新：接入状态、心跳是全局的，哪只宠的设置页都要看到同一份
+    func pushSettings() { allPets.forEach { $0.pushOwnSettings() } }
+    func pushOwnSettings() {
         guard settingsWeb != nil else { return }
         // 当前角色以桌宠页面里正在演的为准（启动时外壳会先从 UserDefaults 恢复上次的角色，见 didFinish）
         web.evaluateJavaScript("charId") { [weak self] r, _ in
@@ -193,7 +211,7 @@ extension App {
             case "agyQuota":
                 if (value as? Bool ?? false) != defaults.bool(forKey: "agyQuota") { toggleAntigravityQuota() }
             case "hideHotkey":
-                if let v = value as? String { defaults.set(v, forKey: "hideHotkey"); registerHotKey() }
+                if let v = value as? String { owner.defaults.set(v, forKey: "hideHotkey"); owner.registerHotKey() }
             case "powerSave":
                 let on = value as? Bool ?? false
                 defaults.set(on, forKey: "powerSave"); js("setPowerSave(\(on))")
@@ -212,12 +230,19 @@ extension App {
             case "dsQuota":
                 let on = value as? Bool ?? true
                 defaults.set(on, forKey: "dsQuota")
-                stamps["deepseek-quota"] = nil   // 重新打开时马上读一次
+                stamps["deepseek-quota"] = nil
+                stamps[stateDir.appendingPathComponent("deepseek-quota.json").path] = nil   // 重新打开时马上读一次
                 if !on { js("setQuota('deepseek', null)") }
             case "edgeDock":
                 let on = value as? Bool ?? true
                 defaults.set(on, forKey: "edgeDock")
                 if !on { undock() }
+            case "appearanceMode":
+                if let mode = value as? String, AppearancePolicy.modes.contains(mode) {
+                    defaults.set(mode, forKey: "appearanceMode"); owner.saveAppearanceConfiguration()
+                }
+            case "appearanceEnabled":
+                appPreferences.set(value as? Bool ?? true, forKey: "appearanceEnabled"); owner.saveAppearanceConfiguration()
             case "aiAutostart":
                 setAIAutostart(value as? Bool ?? true)
             case "login":
@@ -257,7 +282,7 @@ extension App {
             }
             pushSettings()
         default:   // get：设置窗口刚打开
-            if integrated == nil { refreshIntegrated() }
+            if Shared.integrated == nil { refreshIntegrated() }
             pushSettings()
         }
     }

@@ -36,7 +36,7 @@ extension App {
     // 看不见的时候（窗口被完全挡住、锁屏、屏幕休眠）让网页把动画全停了
     func updatePageHidden() {
         guard ready else { return }
-        js("setPageHidden(\(screensAsleep || userHidden || hiddenForFullscreen || !panel.occlusionState.contains(.visible)))")
+        js("setPageHidden(\(!activeInMode || screensAsleep || userHidden || hiddenForFullscreen || hiddenForAppearance || !panel.occlusionState.contains(.visible)))")
         // 藏着 / 屏幕休眠时定时的不查：从那种状态回来时补一次（自带 5 分钟 / 1 分钟间隔，不会多问）
         let away = screensAsleep || userHidden
         if wasAway && !away { refreshCodexQuota(.tick) }

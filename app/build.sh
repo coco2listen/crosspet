@@ -9,6 +9,7 @@ APP="$ROOT/build/CrossPet.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+PACKAGE_ZIP=${1:-}
 VERSION=$(cat VERSION 2>/dev/null || echo 1.0.0)
 CORE_VERSION=${VERSION%%-*}   # 苹果要求的版本号只能是数字：1.2.5-beta.1 → 1.2.5，完整的另存在 CrossPetVersion
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -30,12 +31,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # 两种芯片各编一份，再合成一个通用二进制
-for arch in arm64 x86_64; do
+ARCHS=${CROSSPET_ARCHS:-"arm64 x86_64"}
+for arch in $ARCHS; do
+  case "$arch" in arm64|x86_64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 2 ;; esac
   swiftc -O -target "$arch-apple-macos13.0" app/mac/*.swift -o "build/CrossPet-$arch" \
     -framework Cocoa -framework WebKit -framework ServiceManagement -framework Carbon
 done
-lipo -create build/CrossPet-arm64 build/CrossPet-x86_64 -output "$APP/Contents/MacOS/CrossPet"
-rm build/CrossPet-arm64 build/CrossPet-x86_64
+set -- $ARCHS
+if [ "$#" -eq 1 ]; then
+  mv "build/CrossPet-$1" "$APP/Contents/MacOS/CrossPet"
+else
+  lipo -create build/CrossPet-arm64 build/CrossPet-x86_64 -output "$APP/Contents/MacOS/CrossPet"
+  rm build/CrossPet-arm64 build/CrossPet-x86_64
+fi
 
 # 图标：从 app/icon/AppIcon.png（1024，已带圆角）生成全套尺寸
 ICONSET=build/AppIcon.iconset
@@ -47,6 +55,7 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$ICONSET"
 
+cp LICENSE "$APP/Contents/Resources/LICENSE"
 cp -R app/web "$APP/Contents/Resources/web"
 cp -R characters "$APP/Contents/Resources/characters"
 cp integrations/crosspet-hook.py "$APP/Contents/Resources/crosspet-hook.py"
@@ -62,7 +71,7 @@ xattr -cr "$APP" 2>/dev/null || true   # 去掉文件来源标记之类的扩展
 codesign --force --deep -s - "$APP"
 echo "已编译：$APP"
 
-if [ "$1" = "--zip" ]; then
+if [ "$PACKAGE_ZIP" = "--zip" ]; then
   (cd build && rm -f CrossPet-macOS.zip && ditto -c -k --norsrc --noextattr --keepParent CrossPet.app CrossPet-macOS.zip)
   echo "发布包：$ROOT/build/CrossPet-macOS.zip"
 fi

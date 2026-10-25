@@ -102,11 +102,15 @@ class CodexTurnTest(unittest.TestCase):
         self.send("UserPromptSubmit", sid="b", tid="B1")
         self.assertEqual(self.send("PreToolUse", sid="b", tid="B1")[0], "running")
 
-    def test_events_without_turn_id_are_unaffected(self):
-        # Claude Code 等不带 turn_id：和以前一样，来什么演什么
+    def test_events_without_turn_id_respect_local_completion_fence(self):
+        # 无 provider turn_id 也保持完成；只有明确的主会话新输入才能重新打开。
         self.send("UserPromptSubmit", tid=None, host="claude")
         self.send("Stop", tid=None, host="claude")
-        self.assertEqual(self.send("PostToolUse", tid=None, host="claude")[0], "thinking")
+        self.assertEqual(self.send("PostToolUse", tid=None, host="claude"), ("happy", "Stop"))
+        self.assertEqual(self.send("SubagentStop", tid=None, host="claude"), ("happy", "Stop"))
+        self.assertEqual(self.send("UserPromptSubmit", tid=None, host="claude")[0], "listening")
+        self.assertEqual(self.send("SubagentStop", tid=None, host="claude")[0], "thinking")
+        self.assertEqual(self.send("PreToolUse", tid=None, host="claude")[0], "running")
 
 
 if __name__ == "__main__":

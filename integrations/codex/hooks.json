@@ -111,6 +111,29 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/Library/Application Support/CrossPet/crosspet-hook.py\" gpt",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/Library/Application Support/CrossPet/crosspet-hook.py\" gpt",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

@@ -43,6 +43,7 @@ function characterForModel(model: string): string | undefined {
 }
 // 会话 id → 正在演的角色（还没看到模型时是 Claude）
 const actors = new Map<string, string>()
+const models = new Map<string, string>()
 async function charactersDir($: EngineInterface): Promise<string> {
   const local = await $.env.get('LOCALAPPDATA')
   return local ? `${local}\\CrossPet\\characters` : `${await $.env.get('HOME')}/Library/Application Support/CrossPet/characters`
@@ -52,6 +53,7 @@ async function noteModel($: EngineInterface, model: string): Promise<void> {
   const sid = await $.session.id()
   let who = characterForModel(model) ?? characterForUrl((await $.env.get('ANTHROPIC_BASE_URL')) ?? '') ?? ID
   if (who !== ID && !(await $.fs.exists(`${await charactersDir($)}/${who}/character.json`))) who = ID   // 这个角色没装
+  models.set(sid, model)
   const old = actors.get(sid)
   if (old === who) return
   actors.set(sid, who)
@@ -70,13 +72,60 @@ async function dropSession($: EngineInterface, who: string, sid: string): Promis
   } catch {}
 }
 
+// The mod VM has no Node filesystem/crypto. Keep the key reversible and
+// collision-free with UTF-16 hex, and rename through the supported process API.
+// Session IDs are UUIDs in Claude Code; no prompt, path, or tool arguments escape.
+const familySequences = new Map<string, number>()
+const familyWrites = new Map<string, Promise<void>>()
+const familyResults = new Map<string, { status: string; pose: string; event: string; ts: number }>()
+const producerId = `claude-mod-${Date.now()}-${Math.random().toString(36).slice(2)}`
+async function familyState($: EngineInterface, sid: string, state: State): Promise<void> {
+  if (!sid) return
+  // Only the host's explicit entrypoint decides the client; an unrecognised value stays unknown.
+  const requestedClient = await $.env.get('CROSSPET_CLIENT')
+  const entrypoint = await $.env.get('CLAUDE_CODE_ENTRYPOINT')
+  const client = requestedClient === 'tui' || requestedClient === 'desktop' ? requestedClient
+    : entrypoint === 'claude-desktop' ? 'desktop' : entrypoint === 'cli' || entrypoint === 'sdk-cli' ? 'tui' : 'unknown'
+  const previous = familyWrites.get(sid) ?? Promise.resolve()
+  const sequence = (familySequences.get(sid) ?? 0) + 1
+  familySequences.set(sid, sequence)
+  const status = state.completion === 'compact' ? 'Idle'
+    : state.pose === 'oops' ? 'Error'
+    : state.pose === 'surprised' ? 'Idle'
+    : state.pose === 'asking' ? (state.event === 'Notification' && state.waitingFor !== 'input' ? 'Waiting Permission' : 'Waiting Input')
+    : state.event === 'SessionStart' ? 'Idle'
+    : state.event === 'Stop' && (state.pose === 'happy' || state.pose === 'proud') ? 'Success'
+    : state.event === 'PreToolUse' ? 'Tool Running' : 'Thinking'
+  if (state.event === 'Stop' && (status === 'Success' || status === 'Error'))
+    familyResults.set(sid, { status, pose: state.pose, event: state.event, ts: state.ts })
+  const last = familyResults.get(sid)
+  const lastResult = last && state.ts - last.ts >= 0 && state.ts - last.ts <= 10 ? last : undefined
+  const snapshot = { schema: 1, family: ID, source: 'claude-code', client, sessionId: sid,
+    model: models.get(sid) ?? '', status, pose: state.pose, event: state.event, tool: state.tool,
+    ts: state.ts, observedAt: state.ts, sequence, producerId, turnId: state.turnId, lastResult }
+  const key = sid.split('').map(c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('')
+  // Refuse pathological identifiers instead of truncating into a collision.
+  if (key.length > 180) return
+  const pending = previous.catch(() => {}).then(async () => {
+    if (await $.env.get('LOCALAPPDATA')) return
+    const target = `${await stateDir($)}/families/claude/claude-code-${client}-mod-${key}.json`
+    const temp = `${target}.${producerId}.${sequence}.tmp`
+    await $.fs.write(temp, JSON.stringify(snapshot))
+    await $.process.run(['/bin/mv', '-f', temp, target], { timeoutMs: 5000 })
+  }).catch(() => {})
+  familyWrites.set(sid, pending)
+  await pending
+  if (familyWrites.get(sid) === pending) familyWrites.delete(sid)
+}
+
 // 写状态；同时按会话另外记一份 <角色>-sessions.json（{会话id: {pose, event, ts}}），
 // 同时开着好几个会话在干活时，桌宠演「手忙脚乱」，每个会话一张小卡片
-type State = { pose: string; event: string; tool: string; ts: number }
-async function setState($: EngineInterface, state: State): Promise<void> {
-  await write($, 'seen-claude-mod', String(Math.floor(Date.now() / 1000))).catch(() => {})   // 心跳：最近一次收到消息
-  let sid = ''
-  try { sid = await $.session.id() } catch {}
+type State = { pose: string; event: string; tool: string; ts: number; waitingFor?: 'input' | 'permission'; completion?: 'compact'; turnId?: string }
+async function setState($: EngineInterface, state: State, sessionId?: string): Promise<void> {
+  await write($, 'seen-claude-mod', Math.floor(Date.now() / 1000)).catch(() => {})   // 心跳：最近一次收到消息
+  let sid = sessionId ?? ''
+  if (!sid) { try { sid = await $.session.id() } catch {} }
+  await familyState($, sid, state)
   const who = actors.get(sid) ?? ID
   await write($, `${who}-state.json`, state)
   try {
@@ -163,7 +212,16 @@ function quotaOf(limits: Limit[]) {
 }
 
 export const register: Register = on => {
-  let tools = 0
+  // SDK callbacks can overlap across sessions and outlive a completed turn.
+  // This is a local generation fence, not a claimed provider turn identifier.
+  type Turn = { generation: number; tools: number; closed: boolean }
+  const turns = new Map<string, Turn>()
+  const turnFor = (sid: string): Turn => {
+    let turn = turns.get(sid)
+    if (!turn) { turn = { generation: 0, tools: 0, closed: false }; turns.set(sid, turn) }
+    return turn
+  }
+  const turnKey = (turn: Turn) => `${producerId}:${turn.generation}`
 
   on('session.start', async ($, e, next) => {
     void ensurePet($).catch(() => {})
@@ -176,8 +234,10 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     void ensurePet($).catch(() => {})
-    tools = 0
-    await setState($, { pose: 'listening', event: 'UserPromptSubmit', tool: '', ts: Date.now() / 1000 })
+    const sid = await $.session.id()
+    const turn = { generation: turnFor(sid).generation + 1, tools: 0, closed: false }
+    turns.set(sid, turn)
+    await setState($, { pose: 'listening', event: 'UserPromptSubmit', tool: '', ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
     return next(e)
   })
 
@@ -190,20 +250,26 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    tools += 1
-    await setState($, { pose: poseForTool(e.tool), event: 'PreToolUse', tool: e.tool, ts: Date.now() / 1000 })
+    const sid = await $.session.id(), turn = turnFor(sid)
+    if (!turn.closed) {
+      turn.tools += 1
+      await setState($, { pose: poseForTool(e.tool), event: 'PreToolUse', tool: e.tool, ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
+    }
     const r = await next(e)
     const failed = 'deny' in r && r.deny !== undefined ? true : r.isError === true
-    await setState($, { pose: failed ? 'oops' : 'thinking', event: 'PostToolUse', tool: e.tool, ts: Date.now() / 1000 })
+    if (turns.get(sid) === turn && !turn.closed)
+      await setState($, { pose: failed ? 'oops' : 'thinking', event: 'PostToolUse', tool: e.tool, ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
     return r
   })
 
   on('turn.complete', async ($, e, next) => {
+    const sid = await $.session.id(), turn = turnFor(sid)
+    turn.closed = true
     const r = await next(e)
     const pose =
-      e.reason === 'answer' ? (tools >= BIG_JOB_TOOLS ? 'proud' : 'happy') : e.reason === 'aborted' ? 'surprised' : 'oops'
-    tools = 0
-    await setState($, { pose, event: 'Stop', tool: '', ts: Date.now() / 1000 })
+      e.reason === 'answer' ? (turn.tools >= BIG_JOB_TOOLS ? 'proud' : 'happy') : e.reason === 'aborted' ? 'surprised' : 'oops'
+    if (turns.get(sid) === turn)
+      await setState($, { pose, event: 'Stop', tool: '', ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
     return r
   })
 
@@ -212,19 +278,27 @@ export const register: Register = on => {
   on('classic.Notification', async ($, e, next) => {
     const kind = String(e.notification_type ?? '').toLowerCase()
     if (kind === 'permission_prompt' || kind === 'elicitation_dialog')
-      await setState($, { pose: 'asking', event: 'Notification', tool: '', ts: Date.now() / 1000 })
+      await setState($, { pose: 'asking', event: 'Notification', tool: '', ts: Date.now() / 1000, waitingFor: kind === 'elicitation_dialog' ? 'input' : 'permission' })
     return next(e)
   })
 
   // 压缩上下文（/compact 或自动）：只管主对话，后台预先压缩（precompute）和子任务的不算
   on('session.compact', async ($, e, next) => {
     const shown = (e.trigger === 'manual' || e.trigger === 'auto') && !e.agentId
-    if (shown) await setState($, { pose: 'compact', event: 'PreCompact', tool: '', ts: Date.now() / 1000 })
+    const sid = await $.session.id()
+    if (shown && e.trigger === 'manual') {
+      turns.set(sid, { generation: turnFor(sid).generation + 1, tools: 0, closed: false })
+    }
+    const turn = turnFor(sid)
+    if (shown && !turn.closed) await setState($, { pose: 'compact', event: 'PreCompact', tool: '', ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
     const r = await next(e)
-    // 自动压缩发生在一轮中途，压完接着干活；手动 /compact 压完这一轮就结束了，后面不会再有 Stop，得自己收尾
-    if (shown) await setState($, e.trigger === 'manual'
-      ? { pose: 'happy', event: 'Stop', tool: '', ts: Date.now() / 1000 }
-      : { pose: 'thinking', event: 'PostCompact', tool: '', ts: Date.now() / 1000 })
+    // A compact callback from an interrupted/finished generation cannot revive its turn.
+    if (shown && turns.get(sid) === turn && !turn.closed) {
+      if (e.trigger === 'manual') turn.closed = true
+      await setState($, e.trigger === 'manual'
+        ? { pose: 'happy', event: 'Stop', tool: '', ts: Date.now() / 1000, completion: 'compact', turnId: turnKey(turn) }
+        : { pose: 'thinking', event: 'PostCompact', tool: '', ts: Date.now() / 1000, turnId: turnKey(turn) }, sid)
+    }
     return r
   })
 

@@ -9,6 +9,7 @@ extension App {
     /// 读 /tmp/crosspet/<id>-state.json 和 <id>-quota.json，有变化就交给画面。
     func pollStates() {
         guard ready else { return }
+        if family != nil { pollFamilyStates(); applyLayer(); updateDock(); return }
         var latestActive: (id: String?, ts: Double) = (nil, 0)
         // current：多模型宿主（WorkBuddy）里没有对应角色的模型，由当前角色来演；它只有状态，没有额度
         for id in characterIds + ["current"] {

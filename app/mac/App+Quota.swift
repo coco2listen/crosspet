@@ -10,7 +10,7 @@ extension App {
     /// 打开额度显示 / 页面就绪：马上问；Codex 回完一轮：隔 20 秒以上才问；定时（每分钟）：见 codexTickDue。
     /// 藏着、屏幕休眠时定时的不查（和 Windows 版 Pet.Quota.cs 一致）
     func refreshCodexQuota(_ why: CodexWhy) {
-        guard ready, defaults.bool(forKey: "gptQuota"), !codexInFlight else { return }
+        guard (family == nil || family == "gpt"), ready, defaults.bool(forKey: "gptQuota"), !codexInFlight else { return }
         if why == .tick && (screensAsleep || userHidden) { return }
         let since = Date().timeIntervalSince(codexLiveAt)
         let askLive: Bool
@@ -64,7 +64,7 @@ extension App {
     // 只调「用户状态」接口、只取额度数字；令牌只在内存里用，不存盘、不外传。Antigravity 没开就不显示。
 
     func refreshAntigravityQuota() {
-        guard ready, defaults.bool(forKey: "agyQuota") else { return }
+        guard family == nil, ready, defaults.bool(forKey: "agyQuota") else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             guard let (pid, token) = self.antigravityServer() else {

@@ -74,7 +74,7 @@ extension App {
             "version": currentVersion, "platform": "mac",
             "os": "macOS \(ProcessInfo.processInfo.operatingSystemVersionString) \(arch)",
             "character": currentId ?? characterIds.first ?? "",
-            "integrations": integrated ?? [],
+            "integrations": Shared.integrated ?? [],
             "displays": displaysSummary(),
             "log": String(Self.redact(tail).suffix(6000)),
             "install": installId,
@@ -163,7 +163,7 @@ extension App {
                 let reply = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
                 let code = (reply?["code"] as? NSNumber)?.intValue ?? -1
                 if code == 0 {
-                    DispatchQueue.main.async { defaults.set(recent + [now], forKey: "feedbackTimes") }
+                    DispatchQueue.main.async { self.defaults.set(recent + [now], forKey: "feedbackTimes") }
                     done(true, "")
                 } else if err != nil { done(false, "连不上网络，稍后再试试") }
                 else if code == 11232 { done(false, "反馈的人有点多，过一会儿再发") }
@@ -177,13 +177,7 @@ extension App {
                     self?.pushFeedbackInfo()
                 }
             }
-            if integrated == nil, integrateScript != nil {
-                runIntegrate(["installed"]) { [weak self] out, _ in
-                    let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
-                    self?.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
-                    self?.pushFeedbackInfo()
-                }
-            }
+            if Shared.integrated == nil, integrateScript != nil { refreshIntegrated { [weak self] in self?.pushFeedbackInfo() } }
         }
     }
 

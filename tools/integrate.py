@@ -901,7 +901,10 @@ def ago(ts: float) -> str:
 def seen(target: str) -> str:
     f = STATE_DIR / f"seen-{SEEN_KEY[target]}"
     try:
-        return ago(float(f.read_text().strip() or f.stat().st_mtime))
+        ts = float(f.read_text().strip().strip('"').strip() or f.stat().st_mtime)
+        if not 0 < ts < float("inf"):
+            return "没有记录"
+        return ago(ts)
     except Exception:
         return "没有记录"
 

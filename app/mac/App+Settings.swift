@@ -18,9 +18,9 @@ extension App {
     }
     var textLinked: Bool { defaults.object(forKey: "textLinked") as? Bool ?? true }
     var showName: Bool { defaults.object(forKey: "showName") as? Bool ?? true }
-    var followApps: Bool { defaults.object(forKey: "followApps") as? Bool ?? true }
+    var followApps: Bool { family == nil && (defaults.object(forKey: "followApps") as? Bool ?? true) }
     // 跟随 AI 工作事件（#23 给 macOS 补上的）：默认关——macOS 以前没有这个行为，升级后不该突然按事件换角色；Windows 一直默认开
-    var followEvents: Bool { defaults.object(forKey: "followEvents") as? Bool ?? false }
+    var followEvents: Bool { family == nil && (defaults.object(forKey: "followEvents") as? Bool ?? false) }
     var eggsEnabled: Bool { defaults.object(forKey: "eggs") as? Bool ?? true }
 
     /// 换大小时窗口锚在哪：
@@ -121,7 +121,7 @@ extension App {
         config.userContentController.add(DevBridge(app: self, kind: .settings), name: "settings")
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        w.title = "CrossPet 设置"
+        w.title = petId.map { "CrossPet · \($0) 设置" } ?? "CrossPet 设置"
         w.isReleasedWhenClosed = false
         w.center()
         let v = WKWebView(frame: w.contentView!.bounds, configuration: config)
@@ -147,8 +147,8 @@ extension App {
             "gptQuota": defaults.bool(forKey: "gptQuota"), "agyQuota": defaults.bool(forKey: "agyQuota"), "gptQuotaNote": codexNote,
             "login": SMAppService.mainApp.status == .enabled,
             "edgeDock": edgeDockEnabled, "dsQuota": dsQuotaEnabled, "quotaAggregate": quotaAggregate, "codexResets": codexResets, "peakStyle": peakStyle, "peakSkins": peakSkins, "powerSave": powerSave,
-            "hideHotkey": hideHotkey, "hotkeyFailed": hotkeyFailed, "hotkeys": [["id": "off", "label": "不用快捷键"]] + Self.hotkeyChoices.map { ["id": $0.id, "label": $0.label] },
-            "aiAutostart": aiAutostart,
+            "hideHotkey": hideHotkey, "hotkeyFailed": owner.hotkeyFailed, "hotkeys": [["id": "off", "label": "不用快捷键"]] + Self.hotkeyChoices.map { ["id": $0.id, "label": $0.label] },
+            "aiAutostart": aiAutostart, "appearanceMode": appearanceMode, "appearanceEnabled": appearanceMaster, "appearanceNote": owner.appearanceNote,
             "character": currentId ?? characterIds.first ?? "",
             "characters": characterIds.map { id -> [String: Any] in
                 var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
@@ -159,10 +159,10 @@ extension App {
                 return c
             },
             "updating": updating,
-            "plugins": (try? JSONSerialization.jsonObject(with: Data(pluginStatus.utf8))) ?? [],
+            "plugins": (try? JSONSerialization.jsonObject(with: Data(Shared.pluginStatus.utf8))) ?? [],
         ]
         if let r = latestRelease, canSelfUpdate { state["update"] = r.tag }
-        if let list = integrated, integrateScript != nil {
+        if let list = Shared.integrated, integrateScript != nil {
             state["integrations"] = Self.integrationTargets.map {
                 ["id": $0.id, "label": $0.label, "note": $0.note, "installed": list.contains($0.id),
                  "lastSeen": lastSeen[Self.seenKeys[$0.id] ?? ""].map { Date().timeIntervalSince1970 - $0 as Any } ?? NSNull()] as [String: Any]

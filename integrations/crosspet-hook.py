@@ -23,6 +23,54 @@ from pathlib import Path
 BIG_JOB_TOOLS = 8  # 一轮里用了这么多次工具，结束时「得意」一下
 
 character = sys.argv[1] if len(sys.argv) > 1 else "claude"
+source_host = character  # Family routing follows the client, never its selected model.
+
+
+def detect_client():
+    """(client, reason)：只认宿主明确给出的证据，认不出就是 unknown，绝不按模型名、前台 App 或「不是终端」去猜。
+    CROSSPET_CLIENT 显式指定优先（测试用）。Claude Code：环境变量 CLAUDE_CODE_ENTRYPOINT（桌面版为 claude-desktop，终端为 cli）。
+    Codex：祖先进程里有 ChatGPT.app 里的 codex 就是桌面版，否则祖先里有独立的 codex 可执行文件就是终端版。DeepSeek Harness 只有桌面版"""
+    forced = os.environ.get("CROSSPET_CLIENT")
+    if forced in ("tui", "desktop"):
+        return forced, "env:CROSSPET_CLIENT"
+    if character == "deepseek":
+        return "desktop", "dsh-is-desktop-only"
+    if character == "claude":
+        entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "")
+        return {"claude-desktop": ("desktop", "entrypoint:claude-desktop"), "cli": ("tui", "entrypoint:cli"),
+                "sdk-cli": ("tui", "entrypoint:sdk-cli")}.get(entry, ("unknown", "entrypoint:" + (entry or "unset")))
+    if character == "gpt" and os.name != "nt":
+        try:
+            import subprocess
+            out = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True, timeout=3).stdout
+            table = {}
+            for line in out.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3:
+                    table[int(parts[0])] = (int(parts[1]), parts[2])
+            pid, chain = os.getpid(), []
+            while pid in table and pid > 1 and len(chain) < 16:
+                chain.append(table[pid][1])
+                pid = table[pid][0]
+            # 进程命令行里的可执行文件叫 codex（终端里常常只有裸名 codex；npm 版是 node 后面的脚本路径）
+            def exe(command):
+                words = command.split()
+                for word in words[:2]:
+                    if word.rsplit("/", 1)[-1] == "codex":
+                        return word
+            exes = [e for e in map(exe, chain[1:]) if e]
+            if any("/ChatGPT.app/" in e for e in exes):
+                return "desktop", "ancestor:ChatGPT.app/codex"
+            if exes:
+                return "tui", "ancestor:codex-outside-ChatGPT.app"
+        except Exception:
+            pass
+        return "unknown", "no-codex-ancestor"
+    return "unknown", "no-rule"
+
+
+client, client_reason = detect_client()
+received_at = time.time()
 default_data = Path(os.environ.get("CROSSPET_DATA_DIR") or str(Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData/Local"))) / "CrossPet"))
 # 桌宠的数据目录（角色、退出记号）：设了 CROSSPET_DATA_DIR 就用它（测试也靠它），没设时 Windows 在 %LOCALAPPDATA%\CrossPet，macOS 在 Application Support
 app_data = default_data if (os.name == "nt" or os.environ.get("CROSSPET_DATA_DIR")) else Path.home() / "Library/Application Support/CrossPet"
@@ -262,6 +310,8 @@ except Exception:
     event = None
 if not isinstance(event, dict):
     sys.exit(0)
+# Preserve the actual event's model before legacy model routing fills fallbacks.
+source_model = str(event.get("model") or "")
 
 # 心跳：「最近一次收到这个 AI 的消息」，桌宠记下来，设置里能看出「接上了但从没收到过消息」，反馈里也带着。
 # 文件名按接入的是哪个 AI 分（Antigravity 和 Gemini CLI 都用 gemini 角色，Antigravity 多带一个事件名参数）
@@ -442,7 +492,7 @@ name = event.get("hook_event_name") or arg_event
 # ---- 按轮次丢掉迟到的事件（Codex：事件带 turn_id；PR #26 @KQYaili 报的）----
 # 一轮结束（Stop / 打断 / 手动 compact 完）后，子任务、工具的事件还会陆续到；上一轮的事件也可能在新的一轮里才到。
 # 不拦的话，她刚开心完又被拉回「思考」，或者正在跑的新一轮被旧事件盖掉。按「会话 + 轮次」记在 <宿主>-turns.json：
-# 结束过的轮次再来的事件直接丢掉；子任务（带 agent_id）跟着主轮次走，主轮次结束了它的事件也丢掉。不带 turn_id 的宿主照旧
+# 结束过的轮次再来的事件直接丢掉；子任务（带 agent_id）跟着主轮次走，主轮次结束了它的事件也丢掉。无 turn_id 时用持久本地关闭围栏
 TURN_END = ("Stop", "StopFailure", "Interrupt")
 TURN_KEEP = 24 * 3600
 
@@ -500,12 +550,105 @@ def turn_gate(owner: str, sid: str, tid: str, name: str, child: bool) -> bool:
                     pass
 
 
+def local_turn_gate(owner: str, sid: str, name: str, child: bool, observed_at: float):
+    """Persist a local completion fence when the host has no provider turn ID.
+
+    The returned lock stays held until this hook process exits, including status
+    publication. This prevents an invocation admitted before Stop from writing
+    after it. The local generation is bookkeeping only, never a provider turn_id.
+    """
+    import hashlib
+    folder = state_dir / "local-turn-fences"
+    folder.mkdir(parents=True, exist_ok=True)
+    key = owner + "-" + hashlib.sha256(sid.encode()).hexdigest()[:24]
+    lock = open(folder / (key + ".lock"), "a+b")
+    if os.name == "nt":
+        import msvcrt
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    target = folder / (key + ".json")
+    try:
+        rec = json.loads(target.read_text())
+        if not isinstance(rec, dict):
+            rec = {}
+    except (OSError, ValueError):
+        rec = {}
+    # Explicit completion from the matching standard hook or mod is a fence too.
+    # Read two deterministic paths, never scan unrelated sessions or infer a client.
+    host, client_name = owner.rsplit("-", 1)
+    source = {"claude": "claude-code", "gpt": "codex"}.get(host)
+    if source:
+        import math
+        session_hash = hashlib.sha256(sid.encode()).hexdigest()[:20]
+        mod_key = sid.encode("utf-16-be").hex()
+        candidates = [state_dir / "families" / host / (source + "-" + client_name + "-" + session_hash + ".json")]
+        if host == "claude" and len(mod_key) <= 180:
+            candidates.append(state_dir / "families" / host / (source + "-" + client_name + "-mod-" + mod_key + ".json"))
+        completed = []
+        active_at = 0.0
+        for candidate in candidates:
+            try:
+                snapshot = json.loads(candidate.read_text())
+                ts, seen_at = float(snapshot.get("ts", 0)), float(snapshot.get("observedAt", 0))
+                if not (snapshot.get("schema") == 1 and snapshot.get("family") == host and snapshot.get("source") == source and
+                        snapshot.get("client") == client_name and snapshot.get("sessionId") == sid and
+                        math.isfinite(ts) and math.isfinite(seen_at) and ts > 0 and seen_at > 0):
+                    continue
+                if (snapshot.get("event") in ("Stop", "StopFailure", "Interrupt", "SessionEnd", "AfterAgent") and
+                    snapshot.get("status") in ("Success", "Error", "Idle", "Offline")):
+                    completed.append(snapshot)
+                elif snapshot.get("status") in ("Thinking", "Tool Running", "Waiting Input", "Waiting Permission", "Idle", "Error"):
+                    active_at = max(active_at, ts)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+        started_at = float(rec.get("startedAt", 0))
+        if started_at > 0:
+            completed = [row for row in completed if float(row["ts"]) >= started_at]
+        else:
+            # No local start was observed yet (upgrade/first mid-turn event).
+            # An old mod result cannot end newer work from the matching standard hook.
+            completed = [row for row in completed if float(row["ts"]) > active_at]
+        if completed:
+            latest = max(completed, key=lambda row: float(row["observedAt"]))
+            rec.update(closed=True, observedAt=max(float(rec.get("observedAt", 0)), float(latest["observedAt"])))
+    if float(rec.get("observedAt", 0)) > observed_at:
+        lock.close()
+        return False, None
+    event_id = str(event.get("event_id") or "")
+    if event_id and rec.get("eventId") == event_id:
+        lock.close()
+        return False, None
+    opens = not child and (name in ("SessionStart", "UserPromptSubmit", "BeforeAgent") or
+                          (name == "PreCompact" and str(event.get("trigger", "")).lower() == "manual"))
+    closes = not child and (name in ("Stop", "StopFailure", "Interrupt", "SessionEnd", "AfterAgent") or
+                           (name == "PostCompact" and str(event.get("trigger", "")).lower() == "manual"))
+    if rec.get("closed") and not opens and not closes:
+        lock.close()
+        return False, None
+    generation = int(rec.get("generation", 0))
+    if opens:
+        generation += 1
+        rec["startedAt"] = observed_at
+    else:
+        rec.setdefault("startedAt", observed_at)
+    rec.update(generation=generation, closed=False if opens else bool(rec.get("closed")), observedAt=observed_at, eventId=event_id)
+    if closes:
+        rec["closed"] = True
+    temporary = folder / (key + "." + str(os.getpid()) + ".tmp")
+    temporary.write_text(json.dumps(rec))
+    temporary.replace(target)
+    return True, lock
+
+
 turn_id = str(event.get("turn_id") or "")
 turn_sid = str(event.get("session_id") or "")
 if turn_id and turn_sid:
     is_child = bool(event.get("agent_id"))
     try:
-        if not turn_gate(sys.argv[1] if len(sys.argv) > 1 else "claude", turn_sid, turn_id, name, is_child):
+        if not turn_gate(source_host + ("-" + client if client != "unknown" else ""), turn_sid, turn_id, name, is_child):
             if arg_event:
                 print("{}")
             sys.exit(0)
@@ -519,6 +662,28 @@ if turn_id and turn_sid:
             name = "SubagentStart"
         elif name in TURN_END:
             name = "SubagentStop"
+elif turn_sid and source_host in ("claude", "gpt"):
+    is_child = bool(event.get("agent_id")) or name in ("SubagentStart", "SubagentStop")
+    local_turn_lock = None
+    try:
+        allowed, local_turn_lock = local_turn_gate(source_host + "-" + client, turn_sid, name, is_child, received_at)
+        if not allowed:
+            if arg_event:
+                print("{}")
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        # A broken fence must not block the AI host. Preserve pre-existing behavior.
+        if local_turn_lock is not None:
+            local_turn_lock.close()
+        local_turn_lock = None
+    if is_child:
+        if name in ("SessionStart", "UserPromptSubmit"):
+            name = "SubagentStart"
+        elif name in TURN_END or name in ("SessionEnd", "AfterAgent"):
+            name = "SubagentStop"
+
 call = event.get("toolCall") if isinstance(event.get("toolCall"), dict) else {}  # Antigravity
 tool = str(event.get("tool_name") or call.get("name", "")).lower()
 tool_input = json.dumps(event.get("tool_input") or call.get("args", ""), ensure_ascii=False).lower()
@@ -730,6 +895,93 @@ if session_id and (pose or name == "SessionEnd"):
                         {"pose": state.get("after") or pose if pose == "thinking" else pose, "event": name, "ts": time.time()})
     except Exception:
         pass
+
+
+# Independent family snapshots coexist with every legacy state file. A writer owns
+# only its source/session key; model-based character switching remains single-mode.
+def write_family_snapshot():
+    family = {"claude": "claude", "gpt": "gpt", "deepseek": "deepseek"}.get(source_host)
+    if not family or not session_id or not (pose or name == "SessionEnd"):
+        return
+    import hashlib
+    source = {"claude": "claude-code", "gpt": "codex", "deepseek": "deepseek-harness"}[source_host]
+    original = str(event.get("hook_event_name") or arg_event)
+    if name == "SessionEnd":
+        status = "Offline"
+    elif original == "Interrupt" or pose == "surprised":
+        status = "Idle"
+    elif original == "PostCompact" and str(event.get("trigger", "")).lower() == "manual":
+        status = "Idle"
+    elif pose == "oops":
+        status = "Error"
+    elif pose == "asking":
+        status = "Waiting Permission" if original == "PermissionRequest" or (original == "Notification" and str(event.get("notification_type", "")).lower() in ("permission_prompt", "toolpermission")) else "Waiting Input"
+    elif pose in ("happy", "proud"):
+        status = "Success"
+    elif name == "SessionStart":
+        status = "Idle"
+    elif name in ("PreToolUse", "BeforeTool"):
+        status = "Tool Running"
+    else:
+        status = "Thinking"
+    folder = state_dir / "families" / family
+    folder.mkdir(parents=True, exist_ok=True)
+    key = source + "-" + client + "-" + hashlib.sha256(session_id.encode()).hexdigest()[:20]
+    target = folder / (key + ".json")
+    # Hooks are concurrent subprocesses: serialize only this session and reject
+    # an invocation that arrived before the already-published snapshot.
+    with open(folder / ("." + key + ".lock"), "a+b") as lock:
+        if os.name != "nt":
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        else:
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            try:
+                previous = json.loads(target.read_text())
+            except Exception:
+                previous = {}
+            if previous.get("observedAt", 0) > received_at:
+                return
+            eid = str(event.get("event_id") or "")
+            if eid and eid == previous.get("eventId"):
+                return
+            tool_count = int(previous.get("toolCount", 0))
+            if original in ("UserPromptSubmit", "BeforeAgent"):
+                tool_count = 0
+            elif name in ("PreToolUse", "BeforeTool"):
+                tool_count += 1
+            family_pose = pose or "idle"
+            if status == "Success":
+                family_pose = "proud" if tool_count >= BIG_JOB_TOOLS else "happy"
+            snapshot = dict(schema=1, family=family, source=source, client=client, clientReason=client_reason,
+                            sessionId=session_id, model=str(source_model or previous.get("model") or ""),
+                            status=status, pose=family_pose, event=name, tool=tool, toolCount=tool_count,
+                            ts=received_at, observedAt=received_at,
+                            sequence=int(previous.get("sequence", 0)) + 1,
+                            turnId=turn_id, eventId=eid)
+            result = previous.get("lastResult")
+            if status in ("Success", "Error") and name in ("Stop", "AfterAgent"):
+                result = dict(status=status, pose=family_pose, event=name, ts=received_at)
+            if isinstance(result, dict) and 0 <= received_at - float(result.get("ts", 0)) <= 10:
+                snapshot["lastResult"] = result
+            # Carry the same animation fields as legacy state, but only from
+            # this source/session snapshot; model-routed legacy files may belong to another AI.
+            if status == "Thinking" and previous.get("event") == "PreToolUse" and received_at - float(previous.get("ts", 0)) < 3:
+                snapshot.update(after=previous.get("pose"), afterTs=previous.get("ts"), tool=previous.get("tool", ""))
+            tmp = folder / ("." + key + "." + str(os.getpid()) + ".tmp")
+            tmp.write_text(json.dumps(snapshot))
+            tmp.replace(target)
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+try:
+    write_family_snapshot()
+except Exception:
+    pass  # Observability must never block the client's hooks.
 
 
 if name in LAUNCH_EVENTS:

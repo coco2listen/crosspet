@@ -10,6 +10,8 @@
 
 一只浮在桌面角落的小桌宠，Mac 和 Windows 都能用。**你切到哪个 AI，她就变成哪个 AI 娘；AI 干什么活，她就跟着做什么动作。**
 
+macOS 多桌宠候选支持 Claude、Codex 的终端/桌面端及 DeepSeek Harness 独立显示，可回退单桌宠。使用规则见 [多桌宠说明](docs/MULTI-PET.md)，真实客户端验收边界见 [验证记录](docs/CLIENT-VERIFICATION.md)。
+
 ![Claude、GPT、DeepSeek、Gemini、GLM 五个角色，名牌下显示各自的额度和余额](docs/images/characters.webp)
 
 > 非官方同人项目，与 Anthropic、OpenAI、DeepSeek、Google、智谱、腾讯、阿里巴巴无关。角色形象来自社区二创或 CrossPet 原创设定，见 [致谢与授权](#致谢与授权)。

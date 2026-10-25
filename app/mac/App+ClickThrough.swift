@@ -8,7 +8,7 @@ extension App {
     // 窗口比桌宠大（给动作、气泡留的空间）：鼠标不在桌宠本体、气泡、名牌、额度上时让窗口不接鼠标，点击落到后面的窗口
 
     func updateClickThrough() {
-        if userHidden || hiddenForFullscreen {   // 收着：透明的窗口不能接鼠标（下面会按命中区域反复切换，这里先拦住）
+        if !activeInMode || userHidden || hiddenForFullscreen || hiddenForAppearance {   // 收着：透明的窗口不能接鼠标（下面会按命中区域反复切换，这里先拦住）
             if !panel.ignoresMouseEvents { panel.ignoresMouseEvents = true }
             return
         }
@@ -65,7 +65,7 @@ extension App {
     /// 不 orderOut：退出全屏程序的那一刻窗口如果是摘下来的，「所有桌面都显示」就失效了，
     /// 之后再放回来也只在退出全屏的那个桌面有她（isOnActiveSpace 为 false，别的桌面上右键也没反应）
     func applyHiddenState() {
-        let hidden = userHidden || hiddenForFullscreen
+        let hidden = !activeInMode || userHidden || hiddenForFullscreen || hiddenForAppearance
         panel.alphaValue = hidden ? 0 : 1
         if hidden { panel.ignoresMouseEvents = true }
         updatePageHidden()
@@ -95,6 +95,19 @@ extension App {
             if layerMode != "always" { orderBelowFrontWindow() }
         }
     }
+    /// Preserve individual windows; add only a short, overlapping toolbar on this screen.
+    static func fullscreenWindowPieces(_ pieces: [CGRect], screen: CGRect, topSlack: CGFloat) -> [CGRect] {
+        let near = { (a: CGFloat, b: CGFloat) in abs(a - b) < 2 }
+        let local = pieces.filter { near($0.minX, screen.minX) && near($0.width, screen.width) && $0.minY > screen.minY - 2 && $0.maxY < screen.maxY + 2 }
+        var result = local
+        for body in local where near(body.maxY, screen.maxY) && body.height >= screen.height - topSlack - 80 {
+            for toolbar in local where toolbar.height <= 80 && toolbar.minY - screen.minY <= topSlack && toolbar.minY < body.minY && toolbar.maxY >= body.minY {
+                result.append(body.union(toolbar))
+            }
+        }
+        return result
+    }
+
     func frontIsFullscreen() -> Bool {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               let screen = panel.screen ?? NSScreen.main, let primary = NSScreen.screens.first,
@@ -113,9 +126,11 @@ extension App {
         // 前台程序的普通窗口：左右铺满、底边到屏幕底。有刘海的屏幕全屏时顶上会让出刘海那一条（约 37 点）
         let topSlack = max(screen.safeAreaInsets.top, 24) + 16   // 实测：刘海安全区 32，全屏窗口让出 37；后面还有一道确认，这里放宽
         var exact = false, fills = false
-        for w in list where pid(w) == app.processIdentifier && layer(w) == 0 {
-            guard let r = rect(w), near(r.minX, t.minX), near(r.width, t.width), near(r.maxY, t.maxY) else { continue }
-            if near(r.minY, t.minY) { exact = true } else if r.minY - t.minY <= topSlack { fills = true }
+        // AppKit may split a fullscreen toolbar into another layer-0 window.
+        let pieces = list.filter { pid($0) == app.processIdentifier && layer($0) == 0 }.compactMap(rect)
+        let merged = Self.fullscreenWindowPieces(pieces, screen: t, topSlack: topSlack)
+        for r in merged where near(r.maxY, t.maxY) {
+            if near(r.minY, t.minY) { exact = true } else if r.minY >= t.minY && r.minY - t.minY <= topSlack { fills = true }
         }
         if exact { return true }
         guard fills else { return false }

@@ -12,6 +12,7 @@ extension App {
 
     func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        addFamilyMenu(to: menu)
         if let r = latestRelease {
             if canSelfUpdate {
                 add(menu, updating ? "⬆️ 正在更新到 \(r.tag)…" : "⬆️ 更新到 \(r.tag)", #selector(selfUpdate))
@@ -30,7 +31,7 @@ extension App {
             let sub = NSMenu()
             // 有别的衣服（皮肤）的角色展开成几项：「DeepSeek · 女仆装」「DeepSeek · Claude 卫衣」
             let worn = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
-            for id in characterIds {
+            for id in characterIds where family == nil || family == id {
                 let name = displayNames[id] ?? id
                 let outfits: [(skin: String, title: String)] = skinChoices[id].map { skins in
                     [("", "\(name) · \(baseOutfit[id] ?? "原版")")] + skins.map { ($0.id, "\(name) · \($0.name)") }

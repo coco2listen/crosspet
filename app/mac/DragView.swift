@@ -4,6 +4,7 @@ import ServiceManagement
 import WebKit
 
 final class DragView: NSView {
+    var preferences = UserDefaults.standard
     var onClick: ((NSPoint) -> Void)?   // 点在哪（这个视图的坐标）：网页要知道是不是点在「新功能」卡片的按钮上
     var onMenu: ((NSEvent) -> Void)?
     var onDragStart: (() -> Void)?
@@ -46,7 +47,7 @@ final class DragView: NSView {
     }
     override func mouseUp(with event: NSEvent) {
         if dragged {
-            if let o = window?.frame.origin { defaults.set([o.x, o.y], forKey: "origin") }
+            if let o = window?.frame.origin { preferences.set([o.x, o.y], forKey: "origin") }
             if !shook { onDragEnd?() }   // 甩她的时候松手不贴边
         } else {
             onClick?(convert(event.locationInWindow, from: nil))

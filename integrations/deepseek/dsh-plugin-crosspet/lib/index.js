@@ -5,6 +5,7 @@
 // - 每 1 分钟查一次余额（发消息、一轮结束时也查，30 秒内只查一次）（有 API Key 用 Key；没有就用 Harness 里登录的账号），写 <状态目录>/deepseek-quota.json
 // - 跟着 AI 出现：Harness 启动、新会话、发消息时，桌宠没开着就把它打开（用户从菜单退出后到 Harness 重开前不管；在设置 / 插件配置 autostart: false 里关掉了也不管）
 // 状态目录默认 /tmp/crosspet，可在插件配置里改 stateDir。插件只观察，不改变 DeepSeek 的任何行为。
+import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -64,9 +65,10 @@ export function apply(ctx, config = {}) {
   async function writeJson(file, data) {
     await mkdir(dir, { recursive: true });
     // 临时文件名每次不同：几次写入同时发生时（比如启动时查两次余额、连续的工作事件）不会互相抢同一个文件
-    const tmp = join(dir, `.${file}.${process.pid}.${++writes}`);
+    const target = join(dir, file);
+    const tmp = join(dirname(target), `.crosspet-${process.pid}-${++writes}.tmp`);
     await writeFile(tmp, JSON.stringify(data));
-    await rename(tmp, join(dir, file));
+    await rename(tmp, target);
   }
   // 当前在用的模型对应的角色：每条会话事件都看一眼会话的请求路由（和 Harness 自带插件一样用 requestContext）
   const custom = config.characters && typeof config.characters === "object" ? config.characters : {};
@@ -213,6 +215,86 @@ export function apply(ctx, config = {}) {
       sessionsDirty = new Set();
     }, 200);
   }
+  const familySequences = new Map();
+  const familySourceSequences = new Map();
+  const familyWrites = new Map();
+  const familyTurns = new Map();
+  const familyResults = new Map();
+  const familyKnownSessions = new Map();
+  const producerId = `${process.pid}-${Date.now()}`;
+  function familySnapshot(session, event) {
+    if (!session?.id) return;
+    familyKnownSessions.set(session.id, session);
+    if (session.header?.origin === "subagent" || session.header?.parentSession !== undefined) {
+      // The global subagent lifecycle payload has no parent id. Route only when
+      // the real child header links to an already-observed parent session.
+      let parent = familyKnownSessions.get(session.header?.parentSession);
+      const visited = new Set([session.id]);
+      while (parent?.header?.parentSession !== undefined && !visited.has(parent.id)) {
+        visited.add(parent.id); parent = familyKnownSessions.get(parent.header.parentSession);
+      }
+      if (!parent || visited.has(parent.id)) return;
+      const type = event?.type === "turn/start" ? "subagent/start" : event?.type === "turn/end" ? "subagent/end" : null;
+      if (type) familySnapshot(parent, { type, data: {}, time: event.time });
+      return;
+    }
+    const d = event?.data ?? {};
+    const sourceSequence = Number.isSafeInteger(event?.seq) && event.seq >= 0 ? event.seq : undefined;
+    if (sourceSequence !== undefined && sourceSequence <= (familySourceSequences.get(session.id) ?? -1)) return;
+    let turn = familyTurns.get(session.id) ?? { tools: 0, closed: false, id: "" };
+    if (event?.type === "turn/start") {
+      turn = { tools: 0, closed: false, id: String(d.turn ?? d.turnId ?? event.turnId ?? "") };
+      familyTurns.set(session.id, turn);
+    } else if (turn.closed) return;
+    let status, pose;
+    switch (event?.type) {
+      case "turn/start": status = "Thinking"; pose = "listening"; break;
+      case "step/start": status = "Thinking"; pose = "thinking"; break;
+      case "tool/call": turn.tools += 1; pose = poseForTool(d.name, d.arguments); status = pose === "asking" ? "Waiting Input" : "Tool Running"; break;
+      case "subagent/start": status = "Thinking"; pose = "delegating"; break;
+      case "subagent/end": status = "Thinking"; pose = "thinking"; break;
+      case "tool/result": status = d.message?.isError || d.error ? "Error" : "Thinking"; pose = status === "Error" ? "oops" : "thinking"; break;
+      case "approval/asked": status = "Waiting Permission"; pose = "asking"; break;
+      case "approval/decided": status = "Thinking"; pose = "thinking"; break;
+      case "compaction/start": status = "Thinking"; pose = "compact"; break;
+      case "compaction/end": status = "Thinking"; pose = "thinking"; break;
+      case "turn/end":
+        status = d.reason?.kind === "completed" ? "Success" : d.reason?.kind === "error" ? "Error" : "Idle";
+        pose = status === "Success" ? (turn.tools >= BIG_JOB_TOOLS ? "proud" : "happy") : status === "Error" ? "oops" : d.reason?.kind === "aborted" ? "surprised" : "idle";
+        turn.closed = true;
+        break;
+      default: return;
+    }
+    let model = "";
+    try { model = String(session.requestContext?.()?.model ?? ""); } catch {}
+    const sid = String(session.id), now = Date.now() / 1000;
+    familyTurns.set(sid, turn);
+    if (event.type === "turn/end" && (status === "Success" || status === "Error"))
+      familyResults.set(sid, { status, pose, event: event.type, ts: now });
+    const last = familyResults.get(sid);
+    const lastResult = last && now - last.ts >= 0 && now - last.ts <= 10 ? last : undefined;
+    if (sourceSequence !== undefined) familySourceSequences.set(sid, sourceSequence);
+    const sequence = (familySequences.get(sid) ?? 0) + 1;
+    familySequences.set(sid, sequence);
+    const filename = `families/deepseek/deepseek-harness-desktop-${createHash("sha256").update(sid).digest("hex").slice(0, 20)}.json`;
+    const snapshot = { schema: 1, family: ID, source: "deepseek-harness", client: "desktop", sessionId: sid,
+      model, status, pose, event: event.type, tool: String(d.name ?? ""), ts: Number.isFinite(event.time) && event.time > 0 && event.time <= Date.now() + 1000 ? event.time / 1000 : now, observedAt: now, sequence, sourceSequence,
+      producerId, pid: process.pid, turnId: String(d.turn ?? d.turnId ?? event.turnId ?? turn.id), eventId: String(event.id ?? ""), lastResult };
+    // Serialize snapshots for one session; atomic renames alone can otherwise
+    // publish an older asynchronous write after a newer event.
+    const pending = (familyWrites.get(sid) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      await mkdir(join(dir, "families", ID), { recursive: true });
+      if (sourceSequence !== undefined) {
+        try {
+          const prior = JSON.parse(readFileSync(join(dir, filename), "utf8"));
+          if (Number.isSafeInteger(prior.sourceSequence) && prior.sourceSequence >= sourceSequence) return;
+        } catch {}
+      }
+      await writeJson(filename, snapshot);
+    }).catch(() => {});
+    familyWrites.set(sid, pending);
+    pending.finally(() => { if (familyWrites.get(sid) === pending) familyWrites.delete(sid); });
+  }
   function sessionPose(session, event) {
     const sid = session?.id, d = event?.data ?? {};
     switch (event?.type) {
@@ -234,6 +316,7 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.on("session/event", (session, event) => {
+    familySnapshot(session, event);
     noteRoute(session);
     try { sessionPose(session, event); } catch {}
     // 一轮结束都会记 turn/end（reason.kind：completed / aborted / error / blocked）；

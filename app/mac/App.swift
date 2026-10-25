@@ -4,6 +4,44 @@ import ServiceManagement
 import WebKit
 
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+    // One controller per window; process-wide services belong to the delegate only.
+    let family: String?
+    /// "claude-tui" etc. in five-client mode; equals `family` in three-family mode. Names the preference suite and window.
+    let petId: String?
+    let client: String?
+    let defaults: UserDefaults
+    weak var coordinator: App?
+    var familyPets: [App] = []
+    var familyState: FamilyState?
+    var familyPayload = ""
+    var familySessionPayload = ""
+    var activeInMode = true
+    var hiddenForAppearance = false
+    var appearanceNote = ""
+    var petMode: String { appPreferences.string(forKey: "petMode") ?? "single" }
+    var familiesMode: Bool { petMode != "single" }
+    var isolatedRun: Bool { ProcessInfo.processInfo.environment["CROSSPET_DATA_DIR"] != nil }
+
+    init(family: String? = nil, client: String? = nil, petId: String? = nil) {
+        self.family = family
+        self.client = client
+        self.petId = family.map { petId ?? $0 }
+        if let family {
+            let id = petId ?? family
+            defaults = UserDefaults(suiteName: "\(preferenceDomain).pet.\(id)")!
+            if defaults.object(forKey: "familySchema") == nil {
+                // Copy appearance defaults once from the family's suite when upgrading, else from the app. Legacy keys remain untouched for rollback.
+                let source = id == family ? appPreferences : UserDefaults(suiteName: "\(preferenceDomain).pet.\(family)")!
+                let keys = ["size", "textSize", "textLinked", "showName", "eggs", "hideFullscreen", "auraMode", "layer", "skins", "names", "edgeDock", "powerSave", "peakSkins", "peakStyle", "dsQuota", "gptQuota", "codexResets"]
+                for key in keys { if let value = source.object(forKey: key) ?? appPreferences.object(forKey: key) { defaults.set(value, forKey: key) } }
+                defaults.set(1, forKey: "familySchema")
+            }
+            defaults.set(family, forKey: "character")
+            familyState = FamilyState(family: family, client: client)
+        } else { defaults = appPreferences }
+        super.init()
+    }
+
     var panel: NSPanel!
     var web: WKWebView!
     var timer: Timer?
@@ -11,8 +49,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var ready = false
     var currentId: String?
 
-    let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("CrossPet", isDirectory: true)
+    let root: URL = ProcessInfo.processInfo.environment["CROSSPET_DATA_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CrossPet", isDirectory: true)
     var charactersDir: URL { root.appendingPathComponent("characters") }
 
     var characterIds: [String] = []           // 可切换的角色（不含彩蛋）
@@ -54,7 +92,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // 快捷键隐藏 用的
     var userHidden = false {
-        didSet { if userHidden != oldValue { applyHiddenState() } }   // 快捷键藏起来：和全屏时收着一样，只是透明
+        didSet { if userHidden != oldValue { if family != nil { defaults.set(userHidden, forKey: "hidden") }; applyHiddenState() } }   // 快捷键藏起来：和全屏时收着一样，只是透明
     }
     var hotKeyRef: EventHotKeyRef?
     var hotKeyHandlerInstalled = false
@@ -96,13 +134,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var shownFootPt: CGFloat = 0  // 窗口现在的底栏在屏幕上多高（点）；0 = 还没按画布设过
 
     // 接入 AI 用的
-    var integrated: [String]?
-    var pluginStatus = "[]"      // 插件版本（接入工具的只读检查 integrate.py plugins，JSON 数组），桌宠和设置页据此提醒更新
 
     // 接入被别的工具冲掉时接回去 用的
-    var claudeConfigStamp: Date?
-    var healTimes: [Date] = []
-    var healPending: DispatchWorkItem?
     lazy var pythonReady: Bool = {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
@@ -120,16 +153,26 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     func applicationDidFinishLaunching(_ note: Notification) {
         syncBundledResources()
         markLaunched()
+        setupStatusItem()
+        registerHotKey()
+        setupFamilyPets()
+        startServices()
+        saveAppearanceConfiguration()
+        startRuntimeProbe()
+    }
+
+    func createPetWindow() {
 
         let size = NSSize(width: Self.baseSize.width * petScale, height: Self.baseSize.height * petScale)
         var origin = NSPoint.zero
         if let saved = defaults.array(forKey: "origin") as? [Double], saved.count == 2 {
             origin = NSPoint(x: saved[0], y: saved[1])
         } else if let screen = NSScreen.main?.visibleFrame {
-            origin = NSPoint(x: screen.maxX - size.width - 40, y: screen.minY + 100)
+            origin = NSPoint(x: screen.maxX - size.width - 40 - CGFloat(Self.slot(of: petId)) * (size.width + 10), y: screen.minY + 100)
         }
         panel = NSPanel(contentRect: NSRect(origin: origin, size: size),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = petId.map { "CrossPet · \($0)" } ?? "CrossPet"
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -149,6 +192,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(web)
 
         let drag = DragView(frame: container.bounds)
+        drag.preferences = defaults
         drag.autoresizingMask = [.width, .height]
         // 点的位置换成网页坐标（CSS 像素：除掉人物大小的缩放，y 轴翻过来）
         drag.onClick = { [weak self, weak drag] p in
@@ -164,26 +208,30 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         panel.contentView = container
         panel.orderFrontRegardless()
-        setupStatusItem()
-        registerHotKey()
+    }
 
+    func startServices() {
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.refreshAppearance() }
+        }
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.refreshAppearance() }
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(spaceChanged(_:)),
-            name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] note in
+            self?.allPets.forEach { $0.spaceChanged(note) }
+        }
         // 看不见时停动画：窗口被完全挡住、屏幕休眠、锁屏（锁屏时会话失活）
-        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main) { [weak self] _ in self?.updatePageHidden() }
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main) { [weak self] _ in self?.allPets.forEach { $0.updatePageHidden() } }
         let ws = NSWorkspace.shared.notificationCenter
         for (name, asleep) in [(NSWorkspace.screensDidSleepNotification, true), (NSWorkspace.screensDidWakeNotification, false),
                                (NSWorkspace.sessionDidResignActiveNotification, true), (NSWorkspace.sessionDidBecomeActiveNotification, false)] {
-            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.screensAsleep = asleep; self?.updatePageHidden() }
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.allPets.forEach { $0.screensAsleep = asleep; $0.updatePageHidden() } }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.pollStates() }
-        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.updateClickThrough() }
-        quotaTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshCodexQuota(.tick); self?.refreshAntigravityQuota() }
-        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.watchClaudeConfig() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.pollStates() } }
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.updateClickThrough() } }
+        quotaTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.refreshCodexQuota(.tick); $0.refreshAntigravityQuota() } }
+        Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.owner.watchClaudeConfig() }
         // 检查更新：启动后 20 秒、之后每 3 小时，电脑从睡眠中醒来时也查一次（很多人的电脑一直不关机，只是合盖）
         Timer.scheduledTimer(withTimeInterval: 3 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdate(manual: false) }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -194,6 +242,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // MARK: 工具
 
-    func js(_ code: String) { web.evaluateJavaScript(code, completionHandler: nil) }
+    func js(_ code: String) { web?.evaluateJavaScript(code, completionHandler: nil) }
 
 }

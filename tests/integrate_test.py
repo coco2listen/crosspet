@@ -13,6 +13,23 @@ integrate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(integrate)
 
 class IntegrationTests(unittest.TestCase):
+    def test_seen_accepts_plain_and_legacy_json_timestamps(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(integrate, 'STATE_DIR', Path(tmp)), mock.patch.object(integrate.time, 'time', return_value=1800000000):
+            heartbeat = Path(tmp) / 'seen-claude-mod'
+            for content in ['1799999990', ' 1799999990\n', '"1799999990"', ' \n"1799999990"\n ']:
+                with self.subTest(content=content):
+                    heartbeat.write_text(content)
+                    self.assertEqual(integrate.seen('claude-mod'), '10 秒前')
+
+    def test_seen_missing_or_invalid_is_not_received(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(integrate, 'STATE_DIR', Path(tmp)):
+            heartbeat = Path(tmp) / 'seen-claude-mod'
+            self.assertEqual(integrate.seen('claude-mod'), '没有记录')
+            for content in ['"invalid"', 'nan', 'inf', '0', '-1']:
+                with self.subTest(content=content):
+                    heartbeat.write_text(content)
+                    self.assertEqual(integrate.seen('claude-mod'), '没有记录')
+
     # 插件版本检查（只读）：自带的 / 装到 Harness 那边的 / Harness 里正在跑的，设置页和桌宠据此提醒用户点「更新」
     def _plugin_dirs(self, tmp, bundled='1.3.5', installed='1.3.4', running='1.3.2'):
         b = Path(tmp) / 'bundled.js'; b.write_text(f'const PLUGIN_VERSION = "{bundled}";')

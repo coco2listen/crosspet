@@ -96,6 +96,9 @@ html.tucked-art #body { animation: none !important; transform: none !important; 
   color: #6b4a3a; font-size: calc(11px * var(--k)); min-height: calc(14px * var(--k)); }
 #caption:empty { visibility: hidden; }
 html.no-name #caption { display: none; }
+html.family-mode #foot { min-height: calc(80px * max(1, var(--k))); }
+html.tucked #familyStatus { display: none; }
+#familyStatus { margin-top: calc(2px * var(--k)); padding: calc(1px * var(--k)) calc(8px * var(--k)); border-radius: calc(7px * var(--k)); font: calc(10px * var(--k)) system-ui; color: #6b4a3a; background: rgba(255,255,255,.85); pointer-events: none; }
 #quota { max-width: calc(236px * var(--k)); text-align: center; line-height: 1.35; margin-top: calc(2px * var(--k)); padding: calc(1px * var(--k)) calc(8px * var(--k));
   border-radius: calc(7px * var(--k)); background: rgba(255,255,255,.8); color: #6b4a3a; font-size: calc(10px * var(--k)); }
 #quota:empty { display: none; }
@@ -333,6 +336,7 @@ function setShowName(on) { document.documentElement.classList.toggle('no-name', 
 // 把画布尺寸交回外壳去设窗口（窗口 = 画布 × 人物大小）。规则在 text-size.js；锁着时 k = 1，和以前一样
 function setSizes(size, textSize, linked) {
   const L = TextSize.layout(size, TextSize.effectiveText(size, textSize, linked))
+  if (familyMode) { const extra = Math.ceil(18 * Math.max(1, L.k)); L.h += extra; L.foot += extra }
   document.documentElement.style.setProperty('--k', String(L.k))
   return JSON.stringify({ w: L.w, h: L.h, foot: L.foot })
 }
@@ -350,7 +354,7 @@ function hitRects() {
     const b = shownRect()
     return JSON.stringify(b ? [[b.left - 4, b.top - 4, b.width + 8, b.height + 8].map(Math.round)] : [])
   }
-  for (const id of ['body', 'bubble', 'caption', 'quota', 'newsCard']) {
+  for (const id of ['body', 'bubble', 'caption', 'familyStatus', 'quota', 'newsCard']) {
     const el = $(id)
     if (!el || (id === 'bubble' && el.classList.contains('hide')) || el.classList.contains('hidden')) continue
     const cs = getComputedStyle(el)
@@ -681,7 +685,7 @@ function init(m) {
   for (const c of Object.values(m.characters))
     for (const list of Object.values(c.poses)) for (const u of list) { const i = new Image(); i.onerror = () => window.chrome?.webview?.postMessage({ imageError: u }); i.src = u }   // 预加载失败也报（页面里的监听收不到）
   // 没有当前角色时取 id 排序后的第一个：macOS 的清单是 Swift 字典序列化出来的，key 顺序每次启动都不同（Windows 本来就是排好序的）
-  if (!charId || !manifest.characters[charId]) setCharacter(Object.keys(m.characters).sort().find(k => !m.characters[k].egg), true)
+  if (!charId || !manifest.characters[charId]) setCharacter(familyMode || Object.keys(m.characters).sort().find(k => !m.characters[k].egg), true)
   else { $('caption').textContent = char().name }
 }
 
@@ -715,7 +719,7 @@ function setCharacter(id, quiet) {
     $('blink').src = c.blink || ''
     $('caption').textContent = c.name
     const s = charState[id]
-    const busy = s && Date.now() / 1000 - s.ts < 60 && !TRANSIENT[s.pose] && s.pose !== 'idle'
+    const busy = s && (familyMode ? aiActivity() !== null : Date.now() / 1000 - s.ts < 60) && !TRANSIENT[s.pose] && s.pose !== 'idle'
     setPose(busy ? s.pose : restPose(), true)
     if (busy) watchStuck()   // 接着演她自己的活：卡住兜底按她自己的时间重新算
     if (busy && s.pose === 'listening') thinkTimer = setTimeout(() => { if (charId === id) show('thinking') }, LISTEN_TO_THINKING)
@@ -978,6 +982,7 @@ const NOT_WORKING = new Set(['idle', 'sleeping', 'asking', 'tired', 'hungry', 'h
 let stuckTimer = null
 function watchStuck() {
   clearTimeout(stuckTimer)
+  if (familyMode) return
   stuckTimer = setTimeout(() => {
     if (egg || multi || updatingNow || !pose || NOT_WORKING.has(pose) || pose.startsWith('greet_') || pose.startsWith('fest_')) return
     clearTimeout(thinkTimer)
@@ -1061,6 +1066,14 @@ function setSessions(id, map) {
   refreshMulti()
 }
 function sessionKind(e, now) {
+  if (familyMode && e.status) {
+    if (e.status === 'Offline' && e.lastResult && now - e.lastResult.ts < SESSION_DONE_SHOW) return e.lastResult.status === 'Success' ? 'done' : 'error'
+    if (e.status === 'Offline' || e.status === 'Idle' || e.status === 'Unknown') return null
+    if (e.status === 'Waiting Permission' || e.status === 'Waiting Input') return 'ask'
+    if (e.status === 'Success') return now - Number(e.ts || 0) < SESSION_DONE_SHOW ? 'done' : null
+    if (e.status === 'Error' && ['Stop', 'StopFailure', 'AfterAgent', 'turn/end'].includes(e.event)) return now - Number(e.ts || 0) < SESSION_DONE_SHOW ? 'error' : null
+    return 'work'
+  }
   const age = now - Number(e.ts || 0)
   if (e.pose === 'asking') return age < 600 ? 'ask' : null
   if (e.pose === 'happy' || e.pose === 'proud') return age < SESSION_DONE_SHOW ? 'done' : null
@@ -1189,6 +1202,28 @@ function endMulti() {
   const left = Object.values(currentSessions()).filter(e => sessionKind(e, Date.now() / 1000) === 'work' || sessionKind(e, Date.now() / 1000) === 'ask')
   show(left.length ? left[0].pose : 'idle', true)
   watchStuck()
+}
+
+// Fixed-source mode uses the same animation engine and all existing character assets.
+let familyMode = null, seenFamilyResult = 0
+function setFamilyMode(id) { familyMode = id; document.documentElement.classList.toggle('family-mode', !!id); clearTimeout(stuckTimer) }
+function applyFamilyState(id, state) {
+  if (id !== familyMode) return
+  const badge = $('familyStatus') || Object.assign(document.createElement('div'), {id: 'familyStatus'})
+  if (!badge.parentNode) {
+    $('foot').insertBefore(badge, $('quota'))
+  }
+  badge.textContent = state.event === 'NoSessions' ? '等待会话事件' : state.stale && state.status === 'Unknown' ? '状态待确认' : state.status + (state.stale ? ' · 状态待确认' : '')
+  if (state.unattributed) badge.textContent += ` · ${state.unattributed} 个会话来源未识别`
+  badge.title = [state.source, state.client, state.model].filter(Boolean).join(' / ')
+  applyCharState(id, state)
+  const result = state.lastResult
+  // A short-lived Stop can be followed by SessionEnd before the next native poll.
+  // Animate its explicit result while the badge continues to show the current lifecycle state.
+  if (result && result.ts > seenFamilyResult && Date.now() / 1000 - result.ts < 10) {
+    seenFamilyResult = result.ts
+    if (state.status === 'Offline' || state.status === 'Idle') show(result.pose)
+  }
 }
 
 function applyCharState(id, s) {
@@ -1421,6 +1456,11 @@ function setPluginUpdates(list) {
 }
 function aiActivity() {
   const s = charState[charId]
+  if (familyMode && s?.status) {
+    if (s.status === 'Waiting Input' || s.status === 'Waiting Permission') return 'asking'
+    if (s.status === 'Thinking' || s.status === 'Tool Running' || (s.status === 'Error' && !['Stop', 'StopFailure', 'AfterAgent', 'turn/end'].includes(s.event))) return 'work'
+    return null
+  }
   if (!s?.pose || Date.now() / 1000 - (s.ts || 0) > STUCK_AFTER / 1000) return null
   if (pose === 'idle' || pose === 'sleeping' || pose === 'tired') return null   // 卡住的状态被兜底送回待机了
   if (s.pose === 'asking') return 'asking'
@@ -1485,6 +1525,7 @@ function devShow(id, p, line, frameUrl, holdMs = 10 * 60 * 1000) {
   say(line || '')
 }
 function devRelease() {
+  if (familyMode && charId !== familyMode) setCharacter(familyMode, true)
   devHoldUntil = 0; devActive = false
   if (egg) return
   const c = manifest?.characters?.[charId]

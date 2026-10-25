@@ -27,11 +27,11 @@ extension App {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
             // 临时挂上菜单再「点一下」：菜单从图标正下方弹出，关掉后摘下，免得左键也变成弹菜单
-            statusItem?.menu = buildMenu()
+            statusItem?.menu = menuPet.buildMenu()
             sender.performClick(nil)
             statusItem?.menu = nil
         } else {
-            bringToFront()
+            activePets.forEach { $0.bringToFront() }
         }
     }
 
@@ -39,6 +39,7 @@ extension App {
     @objc func bringToFront() {
         let visible = NSScreen.screens.contains { $0.visibleFrame.intersects(panel.frame.insetBy(dx: 40, dy: 40)) }
         if !visible { resetPosition() }
+        if family != nil { defaults.set(true, forKey: "enabled"); owner.applyPetMode() }
         userHidden = false
         fullscreenOverride = true; hiddenForFullscreen = false   // 你主动叫她：全屏时也出来（切换空间 / 前台程序后再按规则收起来）
         panel.orderFrontRegardless()
@@ -102,12 +103,6 @@ extension App {
 
     /// 背景光晕：auto（跟着系统深浅色，深色模式下关）/ on / off
     var auraMode: String { defaults.string(forKey: "auraMode") ?? "auto" }
-    @objc func setAura(_ sender: NSMenuItem) {
-        guard let mode = sender.representedObject as? String else { return }
-        defaults.set(mode, forKey: "auraMode")
-        js("setAuraMode(\(quote(mode)))")
-    }
-
     @objc func toggleGPTQuota() {
         let on = !defaults.bool(forKey: "gptQuota")
         defaults.set(on, forKey: "gptQuota")

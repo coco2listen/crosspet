@@ -49,6 +49,23 @@ if let i = CommandLine.arguments.firstIndex(of: "--window-place-probe") {
     print([r.minX, r.minY, r.width, r.height].map { String(format: "%g", Double($0)) }.joined(separator: " ")); exit(0)
 }
 
+if CommandLine.arguments.contains("--runtime-probe") {
+    let env = ProcessInfo.processInfo.environment
+    let realHome = getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? NSHomeDirectory()
+    func isSeparate(_ path: String, from original: String) -> Bool {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath() != URL(fileURLWithPath: original).resolvingSymlinksInPath()
+    }
+    guard let suite = env["CROSSPET_PREFERENCES_SUITE"], suite.hasPrefix("io.github.crosspet.test."),
+          let home = env["CFFIXED_USER_HOME"], home.hasPrefix("/"), isSeparate(home, from: realHome),
+          let data = env["CROSSPET_DATA_DIR"], data.hasPrefix("/"), isSeparate(data, from: realHome + "/Library/Application Support/CrossPet"),
+          let state = env["CROSSPET_STATE_DIR"], state.hasPrefix("/"), isSeparate(state, from: "/tmp/crosspet"),
+          env["CROSSPET_PROBE_OUTPUT"] != nil else {
+        fputs("Runtime probe requires isolated home, data, state and output paths.\n", stderr); exit(2)
+    }
+}
+
+if CommandLine.arguments.contains("--appearance-watch") { runAppearanceWatcher() }
+
 let app = NSApplication.shared
 let delegate = App()
 app.delegate = delegate

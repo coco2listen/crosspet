@@ -207,6 +207,8 @@ extension App {
                 defaults.set(on, forKey: "codexResets"); js("setCodexResets(\(on))")
             case "peakSkins":
                 defaults.set(Self.cleanPeakSkins(value), forKey: "peakSkins"); js("setPeakSkins(\(peakSkinsJSON))")
+            case "quotaStyle":
+                if let s = value as? String, ["text", "bars"].contains(s) { defaults.set(s, forKey: "quotaStyle"); js("setQuotaStyle(\(quote(s)))") }
             case "peakStyle":
                 if let s = value as? String, ["bar", "text", "off"].contains(s) { defaults.set(s, forKey: "peakStyle"); js("setPeakStyle(\(quote(s)))") }
             case "dsQuota":

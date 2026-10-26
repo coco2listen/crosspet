@@ -4,6 +4,10 @@
 // 设计见 docs/superpowers/specs/2026-10-16-whats-new-design.md；测试 tests/whats_new.test.js
 ;(function (root) {
   const LIST = [
+    { version: '1.3.8', items: [
+      { icon: '🃏', title: '角色页改成卡片墙', text: '右键「换角色…」打开角色页：上面一排是她的每套衣服，下面一排是所有角色，看着卡片点一下就换。名字和峰谷换装也搬到了这一页。', go: { tab: 'character' } },
+      { icon: '📊', title: '额度条', text: '额度可以换成进度条显示：每个额度一条，后面是剩余百分比和重置时间，剩得越少颜色越暖（蓝 → 橙 → 红）。在「额度」页把「额度显示样式」换成「额度条」。', go: { tab: 'quota', key: 'quotaStyle' } },
+    ] },
     { version: '1.3.7', items: [
       { icon: '🪭', title: '新角色：Qwen（千问）', text: '温柔大方的富家千金：大活干完请你喝奶茶，额度快用完时掏出金卡，闲着会分小礼物给大家。在 Qwen Code 里用千问模型时自动换成她，也可以在「角色」页手动选。千问桌面客户端没有对外接口，她跟不了它干活。', go: { tab: 'character' } },
       { icon: '🔌', title: '接入 Qwen Code', text: '阿里的 Qwen Code 命令行也能接了：她会跟着干活做动作。在「接入 AI」页点一下 Qwen Code 就好，新开的会话生效。这项接入还没在真实的 Qwen Code 里完整测过（干活时的事件要登录才能触发），遇到问题欢迎反馈。', go: { tab: 'ai' } },

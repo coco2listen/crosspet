@@ -136,6 +136,6 @@
     if (el.scrollWidth > el.clientWidth + 1 && nameWidth > NAME_WIDTH_TIGHT) render(el, list, NAME_WIDTH_TIGHT)
   }
 
-  root.QuotaAggregate = { rows, render, compact, shortName, isCrowded }
-  if (typeof module !== 'undefined') module.exports = { rows, compact, shortName, isCrowded }
+  root.QuotaAggregate = { rows, render, compact, shortName, isCrowded, pickBar, windowOf }
+  if (typeof module !== 'undefined') module.exports = { rows, compact, shortName, isCrowded, pickBar, windowOf }   // pickBar、windowOf 额度条样式（quota-bars.js）也用
 })(typeof window !== 'undefined' ? window : globalThis)

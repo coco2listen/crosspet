@@ -60,7 +60,7 @@ extension App {
 
     @objc func setLayer(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? String else { return }
-        defaults.set(mode, forKey: "layer")
+        defaults.set(mode, forKey: "layer"); owner.applySharedSettings(key: "layer")
         applyLayer()
     }
 

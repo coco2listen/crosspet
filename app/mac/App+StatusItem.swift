@@ -37,11 +37,11 @@ extension App {
 
     /// 叫到最前面：在当前屏幕看不见（被拖出屏幕、换了显示器）就先回到右下角
     @objc func bringToFront() {
-        if family != nil { defaults.set(true, forKey: "enabled"); owner.applyPetMode() }
+        if family != nil { windowDefaults.set(true, forKey: "enabled"); owner.applyPetMode() }
         guard let panel else { return }
         let visible = NSScreen.screens.contains { $0.visibleFrame.intersects(panel.frame.insetBy(dx: 40, dy: 40)) }
         if !visible { resetPosition() }
-        userHidden = false
+        setUserHidden(false)
         fullscreenOverride = true; hiddenForFullscreen = false   // 你主动叫她：全屏时也出来（切换空间 / 前台程序后再按规则收起来）
         panel.orderFrontRegardless()
         js("handleClick('pat')")
@@ -72,8 +72,7 @@ extension App {
         guard (skins[id] ?? "") != skin else { return }
         if skin.isEmpty { skins.removeValue(forKey: id) } else { skins[id] = skin }
         defaults.set(skins, forKey: "skins")
-        loadCharacters()
-        js("refreshLook(\(quote(id)))")
+        owner.applySharedSettings(key: "skins")
     }
 
     @objc func rename() {
@@ -92,14 +91,13 @@ extension App {
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         if value.isEmpty { names.removeValue(forKey: id) } else { names[id] = value }
         defaults.set(names, forKey: "names")
-        loadCharacters()
-        js("setName(\(quote(id)), \(quote(displayNames[id] ?? id)))")
+        owner.applySharedSettings(key: "names")
     }
 
     @objc func toggleAntigravityQuota() {
         let on = !defaults.bool(forKey: "agyQuota")
         defaults.set(on, forKey: "agyQuota")
-        if on { refreshAntigravityQuota() } else { js("setQuota('gemini', null)") }
+        owner.applySharedSettings(key: "agyQuota")
     }
 
     /// 背景光晕：auto（跟着系统深浅色，深色模式下关）/ on / off
@@ -107,7 +105,7 @@ extension App {
     @objc func toggleGPTQuota() {
         let on = !defaults.bool(forKey: "gptQuota")
         defaults.set(on, forKey: "gptQuota")
-        if on { refreshCodexQuota(.now) } else { js("setCodexQuota(null)") }
+        owner.applySharedSettings(key: "gptQuota")
     }
 
     @objc func toggleLogin() {
@@ -129,6 +127,6 @@ extension App {
         undock()
         guard let screen = NSScreen.main?.visibleFrame else { return }
         panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 40, y: screen.minY + 100))
-        defaults.removeObject(forKey: "origin")
+        windowDefaults.removeObject(forKey: "origin")
     }
 }

@@ -81,7 +81,7 @@ for id in ids {
 }
 // Edge dock: drag the first pet to the right edge with docking on.
 let first = ids[0]
-UserDefaults(suiteName: "\(suite).pet.\(first)")!.set(true, forKey: "edgeDock")
+UserDefaults(suiteName: suite)!.set(true, forKey: "edgeDock")
 pause(0.5)
 let r0 = rects[first]!
 let target = screen.visibleFrame.maxX - width * 0.2 - r0.minX   // centre lands near the edge

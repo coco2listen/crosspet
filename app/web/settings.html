@@ -134,7 +134,7 @@ input[type=range] { width: 150px; accent-color: var(--accent); }
     <div class="ctl"><label class="switch"><input type="checkbox" data-key="aiAutostart"><span></span></label></div></div>
   <div class="item hidden" data-only="appearanceEnabled"><div class="label">启用自动出现规则（全部桌宠）<small>关闭后停用常驻和宿主跟随；开始工作时自动启动仍由上方开关控制</small></div>
     <div class="ctl"><label class="switch"><input type="checkbox" data-key="appearanceEnabled"><span></span></label></div></div>
-  <div class="item hidden" data-only="appearanceMode"><div class="label">这只桌宠的出现方式<small>默认保持原行为。跟随宿主仅在进程退出时收起；手动隐藏和退出继续生效。常驻在手动退出后本次开机期间不再自行拉起。</small><small id="appearanceNote"></small></div>
+  <div class="item hidden" data-only="appearanceMode"><div class="label">所有桌宠的出现方式<small>统一应用于所有已启用桌宠。跟随应用时，宿主退出后收起；手动隐藏和全屏规则继续生效。CrossPet 运行期间检查宿主。</small><small id="appearanceNote"></small></div>
     <div class="ctl"><select id="appearanceMode" aria-label="出现方式"><option value="onWork">开始工作时出现</option><option value="followApp">跟随智能体应用</option><option value="always">常驻</option></select></div></div>
   <div id="integrations"></div>
 </div>

@@ -399,15 +399,27 @@ function say(line) {
 const RESETS_URL = 'https://codex-resets.com/api/v1/status'
 let resetsOn = false, resetsData = null, resetsAt = 0, resetsTimer = null, codexResetSeenAt = 0, resetsWaiting = false
 let devResetsSaved = null   // 开发者控制台预演中：预演前的真实开关（见 devResetsPlay）
-function setCodexResets(on) {
+let resetsShared = false, sharedResetWaiters = []
+function setCodexResets(on, shared = false) {
+  resetsShared = shared
+  if (resetsOn === !!on && shared) return
   resetsOn = !!on
   clearTimeout(resetsTimer)
-  if (!resetsOn) { resetsData = null; resetsAt = 0; renderQuota(); return }
-  pollResets()
+  if (!resetsOn) { for (const done of sharedResetWaiters.splice(0)) done({ok:false,wait:600000}); resetsData = null; resetsAt = 0; renderQuota(); return }
+  if (!resetsShared) pollResets()
 }
 // 查一次：成功更新 resetsData。返回 { ok: 这次查到了没有, wait: 下次多久后再查（毫秒）}。
 // 失败时保留上次查到的（额度下方那一行、主动提醒照用：官方宣布不会因为断网就失效），但问她时照实说连不上
+function sharedResetResult(raw, ok, wait) {
+  const d = raw && CodexResets.parse(raw)
+  if (resetsOn && !devResetsSaved && d) { resetsData = d; resetsAt = Date.now(); renderQuota(); announceReset() }
+  for (const done of sharedResetWaiters.splice(0)) done({ok: !!ok && !!d, wait})
+}
 async function fetchResets() {
+  if (resetsShared) return new Promise(resolve => {
+    sharedResetWaiters.push(resolve)
+    window.webkit.messageHandlers.pet.postMessage({resetRequest: true})
+  })
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 10000)
   const fail = { ok: false, wait: 10 * 60 * 1000 }
   try {
@@ -459,7 +471,7 @@ async function askReset() {
   if (!devResetsSaved) {   // 开发者控制台预演：用它给的假数据，不联网
     const r = await fetchResets()
     ok = r.ok
-    if (resetsOn) { clearTimeout(resetsTimer); resetsTimer = setTimeout(pollResets, r.wait); renderQuota() }   // 问的途中关了开关：不再续上定时
+    if (resetsOn) { clearTimeout(resetsTimer); if (!resetsShared) resetsTimer = setTimeout(pollResets, r.wait); renderQuota() }   // 问的途中关了开关：不再续上定时
   }
   await new Promise(r => setTimeout(r, Math.max(0, 1200 - (Date.now() - started))))   // 至少想 1.2 秒：一下子就查完、或一下子就连不上时也看得见她在想
   if (charId === 'gpt' && !egg) tellReset(ok ? resetsData : null)
@@ -495,7 +507,7 @@ function devResetsPlay(data) {
 function devResetsDone() {
   if (!devResetsSaved) return
   const was = devResetsSaved.on; devResetsSaved = null
-  resetsOn = false; setCodexResets(was)
+  resetsOn = false; setCodexResets(was, resetsShared)
 }
 // 额度下方那一行（只在官方宣布、还没执行时有）
 function appendResetNotice(el) {

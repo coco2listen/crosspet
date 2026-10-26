@@ -53,7 +53,7 @@ extension App {
         panel.setFrame(f, display: true)
         web.pageZoom = scale
         shownFootPt = pageFoot * scale
-        defaults.set([f.minX, f.minY], forKey: "origin")
+        windowDefaults.set([f.minX, f.minY], forKey: "origin")
     }
 
     /// 人物大小 / 文字大小变了：交给网页算画布（规则在 app/web/text-size.js），按回来的尺寸设窗口。
@@ -103,6 +103,7 @@ extension App {
 
     /// 桌宠页面发来的消息：「新功能」卡片点了「去看看」→ 打开设置停在「新功能」页
     func handlePet(_ body: Any) {
+        if let d = body as? [String: Any], d["resetRequest"] as? Bool == true { owner.refreshSharedResets(); return }
         if let d = body as? [String: Any], let tab = d["openSettings"] as? String { openSettingsAt(tab: tab) }
         // 按时段换衣服（网页层判断好了时段）：只换这个角色已有的衣服，不切换当前角色
         if let d = body as? [String: Any], let w = d["wear"] as? [String: Any], let id = w["id"] as? String, let skin = w["skin"] as? String,
@@ -124,7 +125,7 @@ extension App {
         config.userContentController.add(DevBridge(app: self, kind: .settings), name: "settings")
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
                          styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-        w.title = petId.map { "CrossPet · \($0) 设置" } ?? "CrossPet 设置"
+        w.title = "CrossPet · 共享设置"
         w.isReleasedWhenClosed = false
         w.center()
         let v = WKWebView(frame: w.contentView!.bounds, configuration: config)
@@ -146,15 +147,15 @@ extension App {
         let names = defaults.dictionary(forKey: "names") as? [String: String] ?? [:]
         var state: [String: Any] = [
             "version": currentVersion, "appVersion": currentVersion, "whatsNewSeen": defaults.string(forKey: "whatsNewSeen") ?? currentVersion, "platform": "mac",
-            "size": Double(petScale), "textSize": textScale, "textLinked": textLinked, "showName": showName, "eggs": eggsEnabled, "hideFullscreen": hideInFullscreen, "aura": auraMode, "followApps": followApps, "followEvents": followEvents,
-            "gptQuota": defaults.bool(forKey: "gptQuota"), "agyQuota": defaults.bool(forKey: "agyQuota"), "gptQuotaNote": codexNote,
+            "size": Double(petScale), "textSize": textScale, "textLinked": textLinked, "showName": showName, "eggs": eggsEnabled, "hideFullscreen": hideInFullscreen, "aura": auraMode, "followApps": defaults.object(forKey: "followApps") as? Bool ?? true, "followEvents": defaults.object(forKey: "followEvents") as? Bool ?? false,
+            "gptQuota": defaults.bool(forKey: "gptQuota"), "agyQuota": defaults.bool(forKey: "agyQuota"), "gptQuotaNote": owner.codexNote,
             "login": SMAppService.mainApp.status == .enabled,
             "edgeDock": edgeDockEnabled, "dsQuota": dsQuotaEnabled, "quotaAggregate": quotaAggregate, "codexResets": codexResets, "peakStyle": peakStyle, "peakSkins": peakSkins, "powerSave": powerSave,
             "hideHotkey": hideHotkey, "hotkeyFailed": owner.hotkeyFailed, "hotkeys": [["id": "off", "label": "不用快捷键"]] + Self.hotkeyChoices.map { ["id": $0.id, "label": $0.label] },
             "aiAutostart": aiAutostart, "appearanceMode": appearanceMode, "appearanceEnabled": appearanceMaster, "appearanceNote": owner.appearanceNote,
-            "character": currentId ?? characterIds.first ?? "",
+            "character": defaults.string(forKey: "character") ?? characterIds.first ?? "",
             "characters": characterIds.map { id -> [String: Any] in
-                var c: [String: Any] = ["id": id, "name": displayNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
+                var c: [String: Any] = ["id": id, "name": names[id] ?? defaultNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
                 if let skins = skinChoices[id], !skins.isEmpty {   // 有别的衣服：原版排第一
                     c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版"]] + skins.map { ["id": $0.id, "name": $0.name] }
                     c["skin"] = (defaults.dictionary(forKey: "skins") as? [String: String])?[id] ?? ""

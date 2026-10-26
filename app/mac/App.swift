@@ -6,10 +6,11 @@ import WebKit
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // One controller per window; process-wide services belong to the delegate only.
     let family: String?
-    /// "claude-tui" etc. in five-client mode; equals `family` in three-family mode. Names the preference suite and window.
+    /// "claude-tui" etc. in five-client mode; equals `family` in three-family mode. Names the independent window data and window.
     let petId: String?
     let client: String?
     let defaults: UserDefaults
+    let windowDefaults: UserDefaults
     weak var coordinator: App?
     var familyPets: [App] = []
     var familyState: FamilyState?
@@ -26,26 +27,24 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         self.family = family
         self.client = client
         self.petId = family.map { petId ?? $0 }
-        if let family {
-            let id = petId ?? family
-            defaults = UserDefaults(suiteName: "\(preferenceDomain).pet.\(id)")!
-            if defaults.object(forKey: "familySchema") == nil {
-                // Copy appearance defaults once from the family's suite when upgrading, else from the app. Legacy keys remain untouched for rollback.
-                let source = id == family ? appPreferences : UserDefaults(suiteName: "\(preferenceDomain).pet.\(family)")!
-                let keys = ["size", "textSize", "textLinked", "showName", "eggs", "hideFullscreen", "auraMode", "layer", "skins", "names", "edgeDock", "powerSave", "peakSkins", "peakStyle", "dsQuota", "gptQuota", "codexResets"]
-                for key in keys { if let value = source.object(forKey: key) ?? appPreferences.object(forKey: key) { defaults.set(value, forKey: key) } }
-                defaults.set(1, forKey: "familySchema")
-            }
-            defaults.set(family, forKey: "character")
-            familyState = FamilyState(family: family, client: client)
-        } else { defaults = appPreferences }
+        SharedPreferences.migrate(domain: preferenceDomain, shared: appPreferences)
+        defaults = appPreferences
+        windowDefaults = self.petId.flatMap { UserDefaults(suiteName: "\(preferenceDomain).pet.\($0)") } ?? appPreferences
+        if let family { familyState = FamilyState(family: family, client: client) }
         super.init()
+        userHidden = defaults.bool(forKey: "hidden")
     }
 
     var panel: NSPanel!
     var web: WKWebView!
     var timer: Timer?
     var quotaTimer: Timer?
+    var resetTimer: Timer?
+    var resetTask: URLSessionDataTask?
+    var resetJSON: String?
+    var resetFetchedAt = Date.distantPast
+    var resetNextPollAt = Date.distantPast
+    var resetGeneration = 0
     var ready = false
     var currentId: String?
 
@@ -83,16 +82,20 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var codexBusyAt: Date?   // Codex 最近一次干活的事件（不是 Stop）；Stop 后清掉。干活时额度查得勤一点
     var codexInFlight = false
     var codexLast: (rateLimits: [String: Any], at: Date)?   // 最后一次问到的额度：问不到时接着显示它，并标上时间
+    var codexPayload: String?
+    var agyPayload: String?
+    var agyLiveAt = Date.distantPast
     var codexNote = ""                       // 从没问到过时的原因，设置里那个开关下面显示
     var lastGptQuota = "还没读过"
 
     // Gemini 额度 用的
+    var agyInFlight = false
     var agySession: URLSession?
     var agyPort: (pid: Int32, port: Int)?
 
     // 快捷键隐藏 用的
     var userHidden = false {
-        didSet { if userHidden != oldValue { if family != nil { defaults.set(userHidden, forKey: "hidden") }; applyHiddenState() } }   // 快捷键藏起来：和全屏时收着一样，只是透明
+        didSet { if userHidden != oldValue { applyHiddenState() } }   // 快捷键藏起来：和全屏时收着一样，只是透明
     }
     var hotKeyRef: EventHotKeyRef?
     var hotKeyHandlerInstalled = false
@@ -167,7 +170,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let size = NSSize(width: Self.baseSize.width * petScale, height: Self.baseSize.height * petScale)
         var origin = NSPoint.zero
-        if let saved = defaults.array(forKey: "origin") as? [Double], saved.count == 2 {
+        if let saved = windowDefaults.array(forKey: "origin") as? [Double], saved.count == 2 {
             origin = NSPoint(x: saved[0], y: saved[1])
         } else if let screen = NSScreen.main?.visibleFrame {
             origin = NSPoint(x: screen.maxX - size.width - 40 - CGFloat(Self.slot(of: petId)) * (size.width + 10), y: screen.minY + 100)
@@ -194,7 +197,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(web)
 
         let drag = DragView(frame: container.bounds)
-        drag.preferences = defaults
+        drag.preferences = windowDefaults
         drag.autoresizingMask = [.width, .height]
         // 点的位置换成网页坐标（CSS 像素：除掉人物大小的缩放，y 轴翻过来）
         drag.onClick = { [weak self, weak drag] p in
@@ -235,7 +238,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.pollStates() } }
         Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.updateClickThrough() } }
-        quotaTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.activePets.forEach { $0.refreshCodexQuota(.tick); $0.refreshAntigravityQuota() } }
+        quotaTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshCodexQuota(.tick); self?.refreshAntigravityQuota() }
         Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.owner.watchClaudeConfig() }
         // 检查更新：启动后 20 秒、之后每 3 小时，电脑从睡眠中醒来时也查一次（很多人的电脑一直不关机，只是合盖）
         Timer.scheduledTimer(withTimeInterval: 3 * 3600, repeats: true) { [weak self] _ in self?.checkForUpdate(manual: false) }

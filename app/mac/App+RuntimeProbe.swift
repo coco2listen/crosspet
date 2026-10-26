@@ -44,7 +44,7 @@ private final class RuntimeProbe {
     /// "families" (3 pets) or "clients" (5 pets), chosen by the harness with CROSSPET_PROBE_MODE.
     let mode = ProcessInfo.processInfo.environment["CROSSPET_PROBE_MODE"] == "clients" ? "clients" : "families"
     var petCount: Int { mode == "clients" ? 5 : 3 }
-    let keys = ["petMode", "origin", "size", "hidden", "enabled", "dock", "__runtimeProbeIdentity", "appearanceMode", "appearanceEnabled", "hideFullscreen", "skins"]
+    let keys = ["petMode", "origin", "size", "hidden", "enabled", "dock", "__runtimeProbeIdentity", "appearanceMode", "appearanceEnabled", "hideFullscreen", "skins", "showName", "auraMode", "powerSave", "codexResets"]
 
     init(app: App, output: URL) { self.app = app; self.output = output }
     func later(_ seconds: Double, _ action: @escaping () -> Void) {
@@ -53,8 +53,11 @@ private final class RuntimeProbe {
     func check(_ name: String, _ passed: Bool, _ detail: String = "") {
         assertions.append(["name": name, "passed": passed, "detail": detail])
     }
+    func preference(_ pet: App, _ key: String) -> UserDefaults {
+        ["enabled", "origin", "dock", "__runtimeProbeIdentity"].contains(key) ? pet.windowDefaults : pet.defaults
+    }
     func start() {
-        for key in keys { if let value = app.defaults.object(forKey: key) { ownerValues[key] = value } }
+        for key in keys { if let value = preference(app, key).object(forKey: key) { ownerValues[key] = value } }
         appPreferences.set(mode, forKey: "petMode")
         app.applyPetMode()
         later(110) { [self] in
@@ -75,19 +78,23 @@ private final class RuntimeProbe {
     func prepare() {
         for pet in app.allPets {
             var values: [String: Any] = [:]
-            for key in keys { if let value = pet.defaults.object(forKey: key) { values[key] = value } }
+            for key in keys {
+                if preference(pet, key) === pet.defaults { if let value = ownerValues[key] { values[key] = value } }
+                else if let value = preference(pet, key).object(forKey: key) { values[key] = value }
+            }
             if pet === app { values = ownerValues }
             saved.append((pet, pet.panel.frame, pet.userHidden, pet.pauseRealEvents, values))
             pet.pauseRealEvents = true
             pet.defaults.set(false, forKey: "hideFullscreen")
             pet.hiddenForFullscreen = false
-            pet.defaults.set(true, forKey: "enabled")
+            pet.windowDefaults.set(true, forKey: "enabled")
         }
         appPreferences.set(mode, forKey: "petMode")
         app.applyPetMode()
         check("distinct_active_windows", Set(app.activePets.map { ObjectIdentifier($0.panel) }).count == petCount)
         check("distinct_active_webviews", Set(app.activePets.map { ObjectIdentifier($0.web) }).count == petCount)
-        check("distinct_active_preferences", Set(app.activePets.map { ObjectIdentifier($0.defaults) }).count == petCount)
+        check("shared_active_preferences", Set(app.activePets.map { ObjectIdentifier($0.defaults) }).count == 1)
+        check("distinct_window_preferences", Set(app.activePets.map { ObjectIdentifier($0.windowDefaults) }).count == petCount)
         snapshot("initial") { [self] pages in
             for page in pages {
                 let family = page["family"] as? String ?? "single"
@@ -96,6 +103,80 @@ private final class RuntimeProbe {
                 if family != "single" { check("fixed_identity_\(pet)", page["charId"] as? String == family && page["familyMode"] as? String == family) }
                 else { check("legacy_page_available", page["familyMode"] is NSNull && !(page["charId"] as? String ?? "").isEmpty) }
             }
+            sharedSettingsWindows()
+        }
+    }
+    /// Two actual settings WKWebViews receive a change through the page's native bridge.
+    func sharedSettingsWindows() {
+        let first = app.activePets[0]
+        let pets = [first, app.activePets.first { $0.family != first.family } ?? app.activePets[1]]
+        guard pets.count == 2 else { check("two_settings_owners_available", false); finish(); return }
+        for pet in pets { pet.openSettings() }
+        waitSettings(pets[0]) { [self] in
+            waitSettings(pets[1]) { [self] in
+                let code = "(()=>{post({cmd:'set',key:'showName',value:false}); post({cmd:'set',key:'aura',value:'off'}); post({cmd:'set',key:'powerSave',value:true});return true})()"
+                pets[0].settingsWeb?.evaluateJavaScript(code) { [self] _, error in
+                    check("settings_bridge_write_succeeded", error == nil, error?.localizedDescription ?? "")
+                    later(0.8) { [self] in
+                        let group = DispatchGroup()
+                        for pet in pets {
+                            group.enter()
+                            pet.settingsWeb?.evaluateJavaScript("JSON.stringify({showName:state.showName,aura:state.aura,powerSave:state.powerSave})") { [self] value, _ in
+                                let row = (value as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                                check("open_settings_synced_\(pet.petId!)", row?["showName"] as? Bool == false && row?["aura"] as? String == "off" && row?["powerSave"] as? Bool == true)
+                                group.leave()
+                            }
+                        }
+                        for pet in app.activePets {
+                            group.enter()
+                            pet.web.evaluateJavaScript("document.documentElement.classList.contains('no-name') && document.documentElement.classList.contains('aura-off') && powerSave") { [self] value, _ in
+                                check("shared_behavior_applied_\(pet.petId!)", value as? Bool == true)
+                                group.leave()
+                            }
+                        }
+                        group.notify(queue: .main) { [self] in
+                            for pet in pets { pet.settingsWindow?.close() }
+                            sharedServices()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    /// Seed public reset metadata only; this exercises service ownership without a network request.
+    func sharedServices() {
+        check("quota_timer_owned_once", app.quotaTimer != nil && app.familyPets.allSatisfy { $0.quotaTimer == nil })
+        let quotaPath = stateDir.appendingPathComponent("deepseek-quota.json").path
+        for pet in app.allControllers { pet.stamps["deepseek-quota"] = Date(); pet.stamps[quotaPath] = Date() }
+        app.applySharedSettings(key: "dsQuota")
+        check("ds_quota_change_invalidates_all_cache_keys", app.allControllers.allSatisfy { $0.stamps["deepseek-quota"] == nil && $0.stamps[quotaPath] == nil })
+        let oldQuota = app.defaults.object(forKey: "gptQuota")
+        let oldLast = app.codexLast, oldPayload = app.codexPayload, oldLiveAt = app.codexLiveAt
+        app.defaults.set(true, forKey: "gptQuota"); app.codexLast = nil; app.codexPayload = nil; app.codexLiveAt = Date()
+        for pet in app.allControllers { pet.refreshCodexQuota(.now) }
+        check("failed_quota_request_throttled_across_pages", !app.codexInFlight)
+        if let oldQuota { app.defaults.set(oldQuota, forKey: "gptQuota") } else { app.defaults.removeObject(forKey: "gptQuota") }
+        app.codexLast = oldLast; app.codexPayload = oldPayload; app.codexLiveAt = oldLiveAt
+        app.defaults.set(true, forKey: "codexResets")
+        app.resetJSON = "{}"
+        app.resetFetchedAt = Date()
+        app.resetNextPollAt = Date().addingTimeInterval(1800)
+        app.updateSharedResets()
+        check("shared_reset_timer_owned_once", app.resetTimer != nil && app.resetTask == nil && app.familyPets.allSatisfy { $0.resetTimer == nil && $0.resetTask == nil })
+        app.updateSharedResets()
+        check("shared_reset_cached_update_keeps_timer", app.resetTimer != nil && app.resetTask == nil)
+        let group = DispatchGroup()
+        for pet in app.activePets {
+            group.enter()
+            pet.web.evaluateJavaScript("resetsShared === true && (resetsTimer === null || !resetsTimer)") { [self] value, error in
+                check("renderer_reset_polling_disabled_\(pet.petId!)", value as? Bool == true, error?.localizedDescription ?? "")
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [self] in
+            app.defaults.set(false, forKey: "codexResets"); app.updateSharedResets()
+            check("shared_reset_disabled_stops_service", app.resetTimer == nil && app.resetTask == nil)
+            app.resetJSON = nil; app.resetFetchedAt = .distantPast; app.resetNextPollAt = .distantPast
             lifecycleInitialDisabled()
         }
     }
@@ -162,7 +243,7 @@ private final class RuntimeProbe {
         var skins = pet.defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
         if let skin { skins[family] = skin; pet.defaults.set(skins, forKey: "skins") }
         let origin = NSPoint(x: pet.panel.frame.minX + 7, y: pet.panel.frame.minY + 11)
-        pet.panel.setFrameOrigin(origin); pet.defaults.set([origin.x, origin.y], forKey: "origin")
+        pet.panel.setFrameOrigin(origin); pet.windowDefaults.set([origin.x, origin.y], forKey: "origin")
         let dir = stateDir.appendingPathComponent("families/\(family)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("runtime-lifecycle-state.json")
@@ -176,7 +257,7 @@ private final class RuntimeProbe {
         pet.openSettings()
         waitSettings(pet) { [self] in
             let weakView = ProbeWeakView(pet)
-            pet.defaults.set(false, forKey: "enabled"); app.applyPetMode()
+            pet.windowDefaults.set(false, forKey: "enabled"); app.applyPetMode()
             check("disabled_pet_renderer_released", pet.panel == nil && pet.web == nil && !pet.ready)
             check("disabled_pet_settings_retained", pet.settingsWindow != nil && pet.settingsWeb != nil)
             check("disabled_pet_feedback_summary_safe", pet.runtimeSummary().contains("窗口未创建"))
@@ -188,7 +269,7 @@ private final class RuntimeProbe {
                     check("settings_change_while_disabled_roundtrip", abs((value as? Double ?? 0) - 1.1) < 0.001)
                     awaitReleased([weakView]) { [self] released in
                         check("disabled_pet_webview_deallocated", released)
-                        pet.defaults.set(true, forKey: "enabled"); app.applyPetMode()
+                        pet.windowDefaults.set(true, forKey: "enabled"); app.applyPetMode()
                         awaitReady(petCount) { [self] in
                             check("reenabled_reuses_controller", app.activePets.contains { ObjectIdentifier($0) == identity })
                             check("reenabled_position_preserved", pet.panel.frame.origin == origin)
@@ -286,7 +367,7 @@ private final class RuntimeProbe {
 
         let current = app.activePets
         let weakViews = current.map(ProbeWeakView.init)
-        for pet in current { pet.defaults.set(false, forKey: "enabled") }
+        for pet in current { pet.windowDefaults.set(false, forKey: "enabled") }
         app.applyPetMode()
         check("all_disabled_menu_has_window", app.activePets.isEmpty && app.menuPet.panel != nil && app.menuPet.web != nil)
         check("all_disabled_only_one_fallback", app.allPets.count == 1 && app.allPets.first === app && app.panel.alphaValue == 0)
@@ -294,30 +375,29 @@ private final class RuntimeProbe {
         check("all_disabled_menu_builds", app.menuPet.buildMenu().numberOfItems > 0)
         awaitReleased(weakViews) { [self] released in
             check("all_disabled_webviews_deallocated", released)
-            for pet in current { pet.defaults.set(true, forKey: "enabled") }
+            for pet in current { pet.windowDefaults.set(true, forKey: "enabled") }
             app.applyPetMode()
             awaitReady(petCount) { [self] in manipulateRecreatedWindow() }
         }
     }
     func manipulateRecreatedWindow() {
         let pet = app.activePets[0]
-        let others = app.allPets.filter { $0 !== pet }.map { ($0, $0.panel.frame, $0.web.pageZoom, $0.userHidden) }
         let marker = UUID().uuidString
-        pet.defaults.set(marker, forKey: "__runtimeProbeIdentity")
-        check("preference_write_isolated", app.allPets.filter { $0 !== pet }.allSatisfy { $0.defaults.string(forKey: "__runtimeProbeIdentity") != marker })
+        pet.windowDefaults.set(marker, forKey: "__runtimeProbeIdentity")
+        check("preference_write_isolated", app.allPets.filter { $0 !== pet }.allSatisfy { $0.windowDefaults.string(forKey: "__runtimeProbeIdentity") != marker })
         let suite = UserDefaults(suiteName: "\(preferenceDomain).pet.\(pet.petId!)")!
         check("preference_readback", suite.string(forKey: "__runtimeProbeIdentity") == marker)
         let moved = NSPoint(x: pet.panel.frame.minX + 13, y: pet.panel.frame.minY + 17)
         pet.panel.setFrameOrigin(moved)
-        pet.defaults.set([moved.x, moved.y], forKey: "origin")
+        pet.windowDefaults.set([moved.x, moved.y], forKey: "origin")
         check("programmatic_position_persisted", suite.array(forKey: "origin") as? [Double] == [Double(moved.x), Double(moved.y)])
-        pet.defaults.set(1.2, forKey: "size")
-        pet.applySizes(animateTo: 1.2)
+        pet.handleSettings(["cmd": "set", "key": "size", "value": 1.2])
         later(0.7) { [self] in
             check("programmatic_scale", abs(pet.web.pageZoom - 1.2) < 0.01 && abs(pet.panel.frame.width - pet.pageSize.width * 1.2) < 1)
             pet.setUserHidden(true)
-            check("independent_hide", pet.panel.alphaValue == 0 && suite.bool(forKey: "hidden"))
-            check("other_windows_unchanged", others.allSatisfy { $0.0.panel.frame == $0.1 && $0.0.web.pageZoom == $0.2 && $0.0.userHidden == $0.3 })
+            check("shared_manual_hide", app.activePets.allSatisfy { $0.userHidden && $0.panel.alphaValue == 0 } && app.defaults.bool(forKey: "hidden"))
+            check("all_windows_shared_scale_applied", app.activePets.allSatisfy { abs($0.web.pageZoom - 1.2) < 0.01 })
+            check("manual_hide_shared_preference", app.allControllers.allSatisfy { $0.defaults.bool(forKey: "hidden") })
             snapshot("programmatic_window_changes") { [self] _ in
                 pet.setUserHidden(false)
                 check("show_restored", pet.panel.alphaValue == 1)
@@ -502,11 +582,11 @@ private final class RuntimeProbe {
     func restorePreferenceValues() {
         for (pet, _, _, _, values) in saved {
             pet.scaleTimer?.invalidate()
-            for key in keys { if let value = values[key] { pet.defaults.set(value, forKey: key) } else { pet.defaults.removeObject(forKey: key) } }
+            for key in keys { if let value = values[key] { preference(pet, key).set(value, forKey: key) } else { preference(pet, key).removeObject(forKey: key) } }
         }
         for key in keys {
-            if let value = ownerValues[key] { app.defaults.set(value, forKey: key) }
-            else { app.defaults.removeObject(forKey: key) }
+            if let value = ownerValues[key] { preference(app, key).set(value, forKey: key) }
+            else { preference(app, key).removeObject(forKey: key) }
         }
     }
     func restore(_ done: @escaping () -> Void) {
@@ -518,7 +598,7 @@ private final class RuntimeProbe {
                 pet.userHidden = hidden; pet.pauseRealEvents = pause; pet.shownScale = 0
                 pet.applyScale(pet.petScale, anchor: .corner)
                 pet.panel.setFrame(frame, display: true)
-                if let origin = values["origin"] { pet.defaults.set(origin, forKey: "origin") } else { pet.defaults.removeObject(forKey: "origin") }
+                if let origin = values["origin"] { pet.windowDefaults.set(origin, forKey: "origin") } else { pet.windowDefaults.removeObject(forKey: "origin") }
                 if let stored = values["hidden"] { pet.defaults.set(stored, forKey: "hidden") } else { pet.defaults.removeObject(forKey: "hidden") }
                 pet.js("devRelease(); setEggsEnabled(\(pet.eggsEnabled))")
             }
@@ -526,7 +606,7 @@ private final class RuntimeProbe {
             check("appearance_preferences_restored", saved.allSatisfy { entry in
                 let (pet, _, _, _, values) = entry
                 return keys.allSatisfy { key in
-                    let current = pet.defaults.object(forKey: key)
+                    let current = preference(pet, key).object(forKey: key)
                     if current == nil && values[key] == nil { return true }
                     return (current as? NSObject)?.isEqual(values[key]) == true
                 }

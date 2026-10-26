@@ -207,9 +207,9 @@ extension App {
             case "eggs":
                 let on = value as? Bool ?? true; defaults.set(on, forKey: "eggs"); js("setEggsEnabled(\(on))")
             case "gptQuota":
-                if (value as? Bool ?? false) != defaults.bool(forKey: "gptQuota") { toggleGPTQuota() }
+                defaults.set(value as? Bool ?? false, forKey: "gptQuota")
             case "agyQuota":
-                if (value as? Bool ?? false) != defaults.bool(forKey: "agyQuota") { toggleAntigravityQuota() }
+                defaults.set(value as? Bool ?? false, forKey: "agyQuota")
             case "hideHotkey":
                 if let v = value as? String { owner.defaults.set(v, forKey: "hideHotkey"); owner.registerHotKey() }
             case "powerSave":
@@ -222,9 +222,9 @@ extension App {
                 if let v = value as? String { defaults.set(v, forKey: "whatsNewSeen") }
             case "codexResets":
                 let on = value as? Bool ?? false
-                defaults.set(on, forKey: "codexResets"); js("setCodexResets(\(on))")
+                defaults.set(on, forKey: "codexResets")
             case "peakSkins":
-                defaults.set(Self.cleanPeakSkins(value), forKey: "peakSkins"); js("setPeakSkins(\(peakSkinsJSON))")
+                defaults.set(Self.cleanPeakSkins(value), forKey: "peakSkins")
             case "peakStyle":
                 if let s = value as? String, ["bar", "text", "off"].contains(s) { defaults.set(s, forKey: "peakStyle"); js("setPeakStyle(\(quote(s)))") }
             case "dsQuota":
@@ -248,16 +248,17 @@ extension App {
             case "login":
                 if (value as? Bool ?? false) != (SMAppService.mainApp.status == .enabled) { toggleLogin() }
             case "character":
-                if let id = value as? String, characterIds.contains(id) { switchTo(id) }
+                if let id = value as? String, characterIds.contains(id) { defaults.set(id, forKey: "character"); if !familiesMode { owner.switchTo(id) } }
             default: break
             }
-            pushSettings()
+            owner.applySharedSettings(key: key)
         case "integrate":
             if let target = msg["target"] as? String, let action = msg["action"] as? String { integrate(action, target) }
         case "skin":   // 换衣服：记下来，重新载入立绘；正在显示的就是她的话马上换上
             guard let id = msg["id"] as? String, characterIds.contains(id), let skin = msg["skin"] as? String else { return }
             wear(id, skin)
-            switchTo(id)
+            defaults.set(id, forKey: "character")
+            if !familiesMode { owner.switchTo(id) }
             pushSettings()
         case "rename":
             guard let id = msg["id"] as? String, characterIds.contains(id) else { return }
@@ -265,8 +266,7 @@ extension App {
             let value = (msg["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             if value.isEmpty { names.removeValue(forKey: id) } else { names[id] = value }
             defaults.set(names, forKey: "names")
-            loadCharacters()
-            js("setName(\(quote(id)), \(quote(displayNames[id] ?? id)))")
+            owner.applySharedSettings(key: "names")
             pushSettings()
         case "action":
             switch msg["name"] as? String {

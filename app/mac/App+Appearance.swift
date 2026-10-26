@@ -31,7 +31,7 @@ extension App {
         let specs = petMode == "clients" ? Self.petSpecs : petMode == "families" ? Self.familySpecs : []
         for spec in specs {
             let prefs = UserDefaults(suiteName: "\(preferenceDomain).pet.\(spec.id)")!
-            let mode = prefs.string(forKey: "appearanceMode") ?? "onWork"
+            let mode = appearanceMode
             pets.append(["id": spec.id, "mode": mode, "enabled": prefs.object(forKey: "enabled") as? Bool ?? true])
         }
         if petMode == "single" { pets = [["id": "single", "mode": appearanceMode, "enabled": true]] }
@@ -40,7 +40,7 @@ extension App {
             let data = try JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
             try data.write(to: appearanceConfig, options: .atomic)
             if !isolatedRun {
-                try configureAppearanceWatcher(needed: appearanceMaster && pets.contains { ($0["enabled"] as? Bool ?? true) && $0["mode"] as? String != "onWork" })
+                try configureAppearanceWatcher(needed: false)
             }
             appearanceNote = ""
         } catch { appearanceNote = "出现方式未能保存：\(error.localizedDescription)" }

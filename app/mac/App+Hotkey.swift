@@ -33,7 +33,10 @@ extension App {
 
     @objc func toggleHidden() { setUserHidden(!userHidden) }
     func setUserHidden(_ hidden: Bool) {
-        if family != nil { defaults.set(hidden, forKey: "hidden") }
+        defaults.set(hidden, forKey: "hidden")
+        if owner.allControllers.contains(where: { $0.userHidden != hidden }) {
+            owner.allControllers.forEach { $0.userHidden = hidden }
+        }
         userHidden = hidden   // 透明度 / 鼠标 / 动画在 didSet 里处理，不 orderOut（见 applyHiddenState）
         if !hidden, let panel {
             fullscreenOverride = true; hiddenForFullscreen = false   // 你主动叫她：全屏时也先出来

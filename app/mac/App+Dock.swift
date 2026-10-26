@@ -46,7 +46,7 @@ extension App {
     func undock() {
         guard dock != nil else { return }
         dock = nil; dockOut = false; dockHover = false; dockTucked = false
-        defaults.removeObject(forKey: "dock")
+        windowDefaults.removeObject(forKey: "dock")
         js("setTucked(null)")
     }
     func checkDock() {
@@ -62,7 +62,7 @@ extension App {
     func setDock(_ side: String) {
         dock = side
         dockedAt = Date()
-        defaults.set(side, forKey: "dock")
+        windowDefaults.set(side, forKey: "dock")
         dockOut = dockBusy
         applyDock()
     }

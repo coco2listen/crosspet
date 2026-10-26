@@ -97,7 +97,7 @@ func runTest() {
     check("hidden_while_other_app_fullscreen", hidden, fullscreenEvidence())
     guard transition(false, "textedit_exited_fullscreen") else { return }
     check("back_after_exit_fullscreen", wait(5) { petVisible() }, "\(petAlphas())")
-    pet.set(false, forKey: "hideFullscreen"); pet.synchronize(); pause(1)
+    root.set(false, forKey: "hideFullscreen"); root.synchronize(); pause(1)
     guard transition(true, "textedit_reentered_fullscreen") else { return }
     check("stays_when_hide_fullscreen_off", petVisible(), "\(petAlphas())")
     _ = transition(false, "textedit_final_exit_fullscreen")

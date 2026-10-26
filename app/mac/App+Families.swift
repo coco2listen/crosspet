@@ -41,7 +41,7 @@ extension App {
             pet.screensAsleep = screensAsleep
             pet.latestRelease = latestRelease
             familyPets.append(pet)
-            pet.userHidden = pet.defaults.bool(forKey: "hidden")
+            pet.userHidden = owner.userHidden
         }
     }
 
@@ -49,7 +49,7 @@ extension App {
         if owner !== self { owner.applyPetMode(); return }
         if familiesMode { createFamilyWindows() }
         for pet in allControllers {
-            pet.activeInMode = pet.family == nil ? !familiesMode : (pet.client != nil) == (petMode == "clients") && familiesMode && (pet.defaults.object(forKey: "enabled") as? Bool ?? true)
+            pet.activeInMode = pet.family == nil ? !familiesMode : (pet.client != nil) == (petMode == "clients") && familiesMode && (pet.windowDefaults.object(forKey: "enabled") as? Bool ?? true)
             if pet.activeInMode {
                 if pet.panel == nil { pet.createPetWindow() }
                 pet.applyHiddenState()
@@ -63,6 +63,7 @@ extension App {
             owner.applyHiddenState(); owner.panel.orderOut(nil)
         }
         refreshAppearance()
+        updateSharedResets()
     }
 
     @objc func changePetMode(_ sender: NSMenuItem) {
@@ -73,7 +74,7 @@ extension App {
 
     @objc func togglePetEnabled() {
         guard family != nil else { return }
-        defaults.set(!(defaults.object(forKey: "enabled") as? Bool ?? true), forKey: "enabled")
+        windowDefaults.set(!(windowDefaults.object(forKey: "enabled") as? Bool ?? true), forKey: "enabled")
         owner.applyPetMode()
         owner.saveAppearanceConfiguration()
     }
@@ -90,7 +91,7 @@ extension App {
     @objc func setPetSize(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? Double else { return }
         defaults.set(value, forKey: "size")
-        applySizes(animateTo: CGFloat(value))
+        owner.applySharedSettings(key: "size")
     }
 
     func addFamilyMenu(to menu: NSMenu) {
@@ -106,7 +107,7 @@ extension App {
         let single = owner.add(menu, "原有单桌宠", #selector(changePetMode(_:)))
         single.representedObject = "single"
         single.state = petMode == "single" ? .on : .off
-        let size = NSMenuItem(title: "当前桌宠大小", action: nil, keyEquivalent: "")
+        let size = NSMenuItem(title: "所有桌宠大小", action: nil, keyEquivalent: "")
         let sizes = NSMenu()
         for value in [0.6, 0.8, 1.0, 1.2, 1.4, 1.6] {
             let item = add(sizes, "\(Int(value * 100))%", #selector(setPetSize(_:)))

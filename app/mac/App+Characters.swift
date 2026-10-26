@@ -96,7 +96,7 @@ extension App {
     func switchTo(_ id: String) {
         guard family == nil || family == id else { return }
         currentId = id
-        defaults.set(id, forKey: "character")   // 重启后恢复（didFinish 里）；Windows 的 SwitchTo 也是这么记的
+        if family == nil { defaults.set(id, forKey: "character") }   // 重启后恢复（didFinish 里）；Windows 的 SwitchTo 也是这么记的
         if dock != nil, !dockOut { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.applyDock() } }   // 换了角色，切口位置跟着变
         js("setCharacter(\(quote(id)))")
         pushSettings()

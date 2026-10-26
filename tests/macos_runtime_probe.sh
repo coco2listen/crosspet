@@ -21,7 +21,8 @@ cat > "$SCRATCH/seed.swift" <<'SWIFT'
 import Foundation
 let suite = CommandLine.arguments[1]
 let root = UserDefaults(suiteName: suite)!
-root.set(CommandLine.arguments[2], forKey: "petMode"); root.synchronize()
+root.set(CommandLine.arguments[2], forKey: "petMode")
+root.set(0.9, forKey: "size"); root.synchronize()
 for (i, family) in CommandLine.arguments.dropFirst(3).enumerated() {
     let prefs = UserDefaults(suiteName: suite + ".pet." + family)!
     prefs.set(1, forKey: "familySchema")
@@ -29,6 +30,9 @@ for (i, family) in CommandLine.arguments.dropFirst(3).enumerated() {
     prefs.set([0.8, 0.9, 1.1, 1.0, 1.2][i], forKey: "size")
     prefs.synchronize()
 }
+// Highest-priority legacy preference source; same shared size in both test modes.
+let desktop = UserDefaults(suiteName: suite + ".pet.codex-desktop")!
+desktop.set(1.0, forKey: "size"); desktop.synchronize()
 SWIFT
 swift "$SCRATCH/seed.swift" "$SUITE" "$MODE" $PETS
 for pass in 1 2; do
@@ -44,9 +48,9 @@ for report in reports:
  initial={p['pet']:p for p in report['stages'][0]['pages']}
  for i,pet in enumerate(pets):
   page=initial[pet]
-  assert abs(page['pageZoom']-[.8,.9,1.1,1.0,1.2][i])<.001, (pet,page['pageZoom'])
+  assert abs(page['pageZoom']-1.0)<.001, (pet,page['pageZoom'])
   assert page['frame'][:2]==[100+i*300,100],(pet,page['frame'])
-summary={'passed':True,'processLaunches':2,'assertionsPerLaunch':[len(r['assertions']) for r in reports],'persisted':['independent_origin','independent_scale'],'limitations':['programmatic window operations, not real mouse dragging','no hours-long stability claim']}
+summary={'passed':True,'processLaunches':2,'assertionsPerLaunch':[len(r['assertions']) for r in reports],'persisted':['independent_origin','shared_scale'],'limitations':['programmatic window operations, not real mouse dragging','no hours-long stability claim']}
 (root/'restart-summary.json').write_text(json.dumps(summary,indent=2))
 print(json.dumps(summary))
 PY

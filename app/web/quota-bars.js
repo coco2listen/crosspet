@@ -5,8 +5,8 @@
 ;(function (root) {
   const QA = root.QuotaAggregate || (typeof require !== 'undefined' ? require('./quota-aggregate.js') : null)
 
-  // 颜色三档：多于 30% 蓝（ok）、10%–30% 橙（mid）、10% 及以下红（low，和文字样式变红的门槛一致）
-  const level = pct => (pct > 30 ? 'ok' : pct > 10 ? 'mid' : 'low')
+  // 颜色三档（多于 30% 蓝、10%–30% 橙、10% 及以下红）：和合并显示共用 quota-aggregate.js 的那一份
+  const level = QA.level
 
   // 重置时间短写：24 小时内「3:40」（小时不补零），7 天内「周一」，再远「10/26」，按本机时区
   const WEEK = '日一二三四五六'

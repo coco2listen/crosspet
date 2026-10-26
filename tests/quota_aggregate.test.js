@@ -145,3 +145,22 @@ test('bars（Antigravity）：总行数超过 4 行（底栏放不下）时，�
   // 不拥挤时照旧拆成两行
   assert.deepStrictEqual(rows({ claude: quota.claude, gemini: quota.gemini }, 'claude', ['claude', 'gemini'], nameOf).map(r => r.name), ['Claude', 'Gemini', 'Agy C/G'])
 })
+
+// ---- 额度条样式的合并显示：每格换成短条（quota-bars 设计 2026-10-26 更新）----
+test('compact 给百分比那一块标上 pct、标签那一块标上 label', () => {
+  const parts = compact('5小时 剩余 98% · 07:50 重置', false)
+  assert.strictEqual(parts.find(p => p.pct != null).pct, 98)
+  assert.strictEqual(parts.find(p => p.label != null).label, '5h')
+  assert.strictEqual(compact('余额 ¥4.96', false).some(p => p.pct != null), false)
+})
+
+test('barCell：窗口名（5h、周、今日）不写，池名（Arg、C/G）留着；颜色三档；余额不是条', () => {
+  const { barCell, level } = require('../app/web/quota-aggregate.js')
+  assert.deepStrictEqual(barCell(compact('5小时 剩余 98% · 07:50 重置', false)), { label: null, pct: 98, level: 'ok' })
+  assert.deepStrictEqual(barCell(compact('本周 剩余 22%', false)), { label: null, pct: 22, level: 'mid' })
+  assert.deepStrictEqual(barCell(compact('Arg 剩余 8%', false)), { label: 'Arg', pct: 8, level: 'low' })
+  assert.deepStrictEqual(barCell(compact('C/G 周 剩余 70%', false)), { label: 'C/G', pct: 70, level: 'ok' })
+  assert.deepStrictEqual(barCell(compact('Gemini 本周 剩余 40%', false)), { label: 'Gemini', pct: 40, level: 'ok' })
+  assert.strictEqual(barCell(compact('余额 ¥4.96', false)), null)
+  assert.deepStrictEqual([31, 30, 11, 10].map(level), ['ok', 'mid', 'mid', 'low'])
+})

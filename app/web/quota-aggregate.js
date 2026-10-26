@@ -13,10 +13,24 @@
     const m = /^(.+?) 剩余 (\d+)%(?: · (\S+) 重置)?(.*)$/.exec(seg)
     if (!m) return [{ text: seg, low: sourceLow }]
     const [, label, pct, time, tail] = m
-    const parts = [{ text: (SHORT[label] || label) + ' ' }, { text: pct + '%', low: +pct <= LOW_LEFT }]
+    const short = SHORT[label] || label
+    // label、pct 给额度条样式用（barCell）：文字样式照旧只看 text、low
+    const parts = [{ text: short + ' ', label: short }, { text: pct + '%', low: +pct <= LOW_LEFT, pct: +pct }]
     if (time) parts.push({ text: ' · ' + time })
     if (tail.trim()) parts.push({ text: ' ' + tail.trim() })   // GPT 问不到时的「· 11:30 的数据」
     return parts
+  }
+
+  // ---- 额度条样式（设置「额度显示样式：额度条」）：每格换成短条 ----
+  // 颜色三档：多于 30% 蓝（ok）、10%–30% 橙（mid）、10% 及以下红（low，和文字样式变红的门槛一致）。单家显示（quota-bars.js）也用这一份
+  const level = pct => (pct > 30 ? 'ok' : pct > LOW_LEFT ? 'mid' : 'low')
+  const WINDOWS = new Set(['5h', '周', '今日', '5小时', '本周'])
+  // 一格（compact 拆好的几块）→ { label, pct, level }：窗口名不写（同一列都是同一种窗口），池名（Arg、C/G）留着；认不出的（余额）返回 null，照旧显示文字
+  function barCell(parts) {
+    const p = parts.find(x => x.pct != null)
+    if (!p) return null
+    const words = (parts.find(x => x.label != null)?.label || '').split(' ').filter(w => !WINDOWS.has(w))
+    return { label: words.join(' ') || null, pct: p.pct, level: level(p.pct) }
   }
 
   // ---- 额度条 bars → 格子 ----
@@ -106,7 +120,8 @@
 
   // 画成对齐的表：名字一列、每个窗口一列，列宽自动撑开，不要求等宽字体。
   // 格子比别的行少的行，最后一格占满剩下的列（余额、Gemini 的长文本不撑歪别的行）
-  function render(el, list, nameWidth = NAME_WIDTH) {
+  // style：'bars' 时认得出百分比的格子画成「池名（有才画）+ 短条 + 百分比」，其余照旧（见 barCell）
+  function render(el, list, nameWidth = NAME_WIDTH, style = 'text') {
     el.replaceChildren()
     const n = Math.max(0, ...list.map(r => r.cells.length))
     el.className = 'agg'
@@ -119,7 +134,16 @@
       r.cells.forEach((parts, i) => {
         const cell = div('qc')
         if (i === r.cells.length - 1 && r.cells.length < n) cell.style.gridColumn = `span ${n - r.cells.length + 1}`
-        for (const p of parts) {
+        const bar = style === 'bars' && barCell(parts)
+        if (bar) {
+          cell.classList.add('qbarcell', bar.level)
+          const span = (cls, text) => { const s = document.createElement('span'); s.className = cls; if (text != null) s.textContent = text; return s }
+          const track = span('qtrack'), fill = document.createElement('i')
+          fill.style.width = bar.pct + '%'
+          track.append(fill)
+          if (bar.label) cell.append(span('ql', bar.label))
+          cell.append(track, span('qp', bar.pct + '%'))
+        } else for (const p of parts) {
           const s = document.createElement('span'); s.textContent = p.text
           if (p.low) s.className = 'low'
           cell.append(s)
@@ -133,9 +157,9 @@
     // 2. 窗口放不下（Gemini 的模型池名字长）：字和间距收紧一点，别把名字列挤没
     if (isCrowded(list.length) || el.scrollWidth > el.clientWidth + 1) el.classList.add('tight')
     // 收紧了还放不下（名字长 + 四家都有 + 微软雅黑比苹方宽）：名字再截短一点，重画一次
-    if (el.scrollWidth > el.clientWidth + 1 && nameWidth > NAME_WIDTH_TIGHT) render(el, list, NAME_WIDTH_TIGHT)
+    if (el.scrollWidth > el.clientWidth + 1 && nameWidth > NAME_WIDTH_TIGHT) render(el, list, NAME_WIDTH_TIGHT, style)
   }
 
-  root.QuotaAggregate = { rows, render, compact, shortName, isCrowded, pickBar, windowOf }
-  if (typeof module !== 'undefined') module.exports = { rows, compact, shortName, isCrowded, pickBar, windowOf }   // pickBar、windowOf 额度条样式（quota-bars.js）也用
+  root.QuotaAggregate = { rows, render, compact, shortName, isCrowded, pickBar, windowOf, barCell, level }
+  if (typeof module !== 'undefined') module.exports = { rows, compact, shortName, isCrowded, pickBar, windowOf, barCell, level }   // pickBar、windowOf 额度条样式（quota-bars.js）也用
 })(typeof window !== 'undefined' ? window : globalThis)

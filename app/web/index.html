@@ -1074,7 +1074,8 @@ let multi = null             // 正在演：{ side, flipTimer, cards: Map(会话
 
 function setSessions(id, map) {
   if (id === 'current') id = charId
-  sessions[id] = map || {}
+  if (familyMode && id !== familyMode) return
+  sessions[id] = familyClient ? Object.fromEntries(Object.entries(map || {}).filter(([, state]) => state.client === familyClient)) : map || {}
   refreshMulti()
 }
 function sessionKind(e, now) {
@@ -1217,17 +1218,18 @@ function endMulti() {
 }
 
 // Fixed-source mode uses the same animation engine and all existing character assets.
-let familyMode = null, seenFamilyResult = 0
-function setFamilyMode(id) { familyMode = id; document.documentElement.classList.toggle('family-mode', !!id); clearTimeout(stuckTimer) }
+let familyMode = null, familyClient = null, seenFamilyResult = 0
+function setFamilyMode(id, client = null) { familyMode = id; familyClient = ['tui', 'desktop'].includes(client) ? client : null; document.documentElement.classList.toggle('family-mode', !!id); clearTimeout(stuckTimer) }
 function applyFamilyState(id, state) {
-  if (id !== familyMode) return
+  if (id !== familyMode || (familyClient && state.client !== familyClient && !(state.event === 'NoSessions' && !state.client))) return
   const badge = $('familyStatus') || Object.assign(document.createElement('div'), {id: 'familyStatus'})
   if (!badge.parentNode) {
     $('foot').insertBefore(badge, $('quota'))
   }
   badge.textContent = state.event === 'NoSessions' ? '等待会话事件' : state.stale && state.status === 'Unknown' ? '状态待确认' : state.status + (state.stale ? ' · 状态待确认' : '')
+  if (familyClient) badge.textContent = `${familyClient === 'tui' ? '终端' : '桌面'} · ${badge.textContent}`
   if (state.unattributed) badge.textContent += ` · ${state.unattributed} 个会话来源未识别`
-  badge.title = [state.source, state.client, state.model].filter(Boolean).join(' / ')
+  badge.title = [state.source, familyClient || state.client, state.model].filter(Boolean).join(' / ')
   applyCharState(id, state)
   const result = state.lastResult
   // A short-lived Stop can be followed by SessionEnd before the next native poll.

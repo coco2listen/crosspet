@@ -177,8 +177,38 @@ private final class RuntimeProbe {
             app.defaults.set(false, forKey: "codexResets"); app.updateSharedResets()
             check("shared_reset_disabled_stops_service", app.resetTimer == nil && app.resetTask == nil)
             app.resetJSON = nil; app.resetFetchedAt = .distantPast; app.resetNextPollAt = .distantPast
-            lifecycleInitialDisabled()
+            claudeOutfits()
         }
+    }
+    /// Actual renderer image loading for both reusable Claude outfits, preserving fixed client identity.
+    func claudeOutfits() {
+        let pets = app.activePets.filter { $0.family == "claude" }
+        guard let pet = pets.first else { lifecycleInitialDisabled(); return }
+        let previous = pet.defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        let expected = ["claude-hoodie", "claude-pajamas"]
+        check("claude_outfits_available", pets.allSatisfy { Set($0.skinChoices["claude"]?.map(\.id) ?? []).isSuperset(of: expected) })
+        var remaining = expected
+        func next() {
+            guard !remaining.isEmpty else {
+                pet.defaults.set(previous, forKey: "skins"); app.applySharedSettings(key: "skins")
+                later(0.5) { [self] in lifecycleInitialDisabled() }; return
+            }
+            let skin = remaining.removeFirst()
+            pet.wear("claude", skin)
+            later(0.5) { [self] in
+                let group = DispatchGroup()
+                for view in pets {
+                    group.enter()
+                    view.web.evaluateJavaScript("JSON.stringify({id:charId,client:familyClient,skin:manifest.characters.claude.skin,image:[...document.querySelectorAll('#body img')].find(i=>i.classList.contains('on'))?.src||'',loaded:[...document.querySelectorAll('#body img')].some(i=>i.classList.contains('on')&&i.complete&&i.naturalWidth>0)})") { [self] result, _ in
+                        let row = (result as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+                        check("outfit_render_\(skin)_\(view.petId!)", row?["id"] as? String == "claude" && row?["skin"] as? String == skin && row?["loaded"] as? Bool == true && (row?["image"] as? String)?.contains("/characters/\(skin)/") == true && (view.client == nil || row?["client"] as? String == view.client))
+                        group.leave()
+                    }
+                }
+                group.notify(queue: .main) { next() }
+            }
+        }
+        next()
     }
     func awaitReady(_ count: Int, until deadline: Date = Date().addingTimeInterval(12), _ done: @escaping () -> Void) {
         guard !finished else { return }
@@ -301,7 +331,7 @@ private final class RuntimeProbe {
             group.enter()
             let code = """
             JSON.stringify((()=>{const img=[...document.querySelectorAll('#body img')].filter(i=>i.classList.contains('on'))[0]; return {
-              charId, pose, familyMode, caption:document.getElementById('caption').textContent,
+              charId, pose, familyMode, familyClient, caption:document.getElementById('caption').textContent,
               imageLoaded:!!img&&img.complete&&img.naturalWidth>0,
               naturalWidth:img?.naturalWidth||0, image:img?.src||'', bodyClass:document.getElementById('body').className,
               badge:document.getElementById('familyStatus')?.textContent||'', pageHidden,
@@ -416,7 +446,9 @@ private final class RuntimeProbe {
                 let file = dir.appendingPathComponent("runtime-probe-\(source)-\(client).json")
                 let snapshot: [String: Any] = ["schema": 1, "family": family, "source": source, "client": client,
                     "sessionId": "runtime-probe-shared-session", "model": family == "deepseek" ? "claude-model" : family,
-                    "status": "Tool Running", "pose": "running", "event": "PreToolUse", "sequence": 1,
+                    "status": mode == "clients" && family == "claude" ? (client == "tui" ? "Thinking" : "Waiting Permission") : "Tool Running",
+                    "pose": mode == "clients" && family == "claude" ? (client == "tui" ? "thinking" : "asking") : "running",
+                    "event": mode == "clients" && family == "claude" ? (client == "tui" ? "PreInvocation" : "PermissionRequest") : "PreToolUse", "sequence": 1,
                     "ts": Date().timeIntervalSince1970, "observedAt": Date().timeIntervalSince1970]
                 if let data = try? JSONSerialization.data(withJSONObject: snapshot) { try? data.write(to: file, options: .atomic) }
                 routedFiles.append(file)
@@ -433,7 +465,14 @@ private final class RuntimeProbe {
                 }
                 for page in pages where page["family"] as? String != "single" {
                     let family = page["family"] as! String, pet = page["pet"] as! String
-                    check("simulated_route_\(pet)", page["charId"] as? String == family && (page["badge"] as? String)?.contains("Tool Running") == true)
+                    let isClaudeClient = mode == "clients" && family == "claude"
+                    let expected = isClaudeClient ? (pet == "claude-tui" ? "Thinking" : "Waiting Permission") : "Tool Running"
+                    check("simulated_route_\(pet)", page["charId"] as? String == family && (page["badge"] as? String)?.contains(expected) == true)
+                    if mode == "clients" {
+                        let client = pet.hasSuffix("tui") ? "tui" : "desktop"
+                        check("fixed_client_label_\(pet)", page["familyClient"] as? String == client && (page["badge"] as? String)?.hasPrefix(client == "tui" ? "终端 · " : "桌面 · ") == true)
+                        if isClaudeClient { check("different_claude_pose_\(pet)", page["pose"] as? String == (client == "tui" ? "thinking" : "asking")) }
+                    }
                     if family != "deepseek" && mode == "families" { check("multi_session_animation_\(pet)", (page["pose"] as? String)?.hasPrefix("busy_") == true) }
                 }
                 for file in routedFiles { try? FileManager.default.removeItem(at: file) }

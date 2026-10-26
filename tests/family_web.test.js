@@ -43,7 +43,7 @@ test('unconfirmed session does not keep a busy card or resume thinking', () => {
 
 test('unconfirmed badge describes uncertainty and identifies the count as sessions', () => {
   const badge={parentNode:true,textContent:'',title:''}
-  const ctx={familyMode:'claude',seenFamilyResult:0,$:()=>badge,applyCharState:()=>{},Date}
+  const ctx={familyMode:'claude',familyClient:null,seenFamilyResult:0,$:()=>badge,applyCharState:()=>{},Date}
   vm.createContext(ctx);vm.runInContext(fn('applyFamilyState','function applyCharState'),ctx)
   ctx.state={status:'Unknown',pose:'sleeping',event:'StateStale',stale:true,unattributed:2}
   vm.runInContext("applyFamilyState('claude',state)",ctx)
@@ -69,4 +69,39 @@ test('every explicit terminal error stops busy cards after its acknowledgement',
     assert.equal(vm.runInContext('sessionKind(entry,1005)',ctx),null)
     assert.equal(vm.runInContext('aiActivity()',ctx),null)
   }
+})
+
+function clientView(client) {
+  const badge={parentNode:true,textContent:'',title:''}, applied=[]
+  const ctx={familyMode:'claude',familyClient:client,seenFamilyResult:0,$:()=>badge,applyCharState:(_,state)=>applied.push(state),Date}
+  vm.createContext(ctx);vm.runInContext(fn('applyFamilyState','function applyCharState'),ctx)
+  return {ctx,badge,applied,send(state) { ctx.state=state;vm.runInContext("applyFamilyState('claude',state)",ctx) }}
+}
+test('two Claude views keep fixed client labels and independent simultaneous states', () => {
+  const tui=clientView('tui'),desktop=clientView('desktop')
+  tui.send({client:'tui',status:'Thinking',pose:'thinking',event:'PreInvocation'})
+  desktop.send({client:'desktop',status:'Waiting Permission',pose:'asking',event:'PermissionRequest'})
+  assert.equal(tui.badge.textContent,'终端 · Thinking')
+  assert.equal(desktop.badge.textContent,'桌面 · Waiting Permission')
+  assert.equal(tui.applied.at(-1).pose,'thinking');assert.equal(desktop.applied.at(-1).pose,'asking')
+  tui.send({client:'desktop',status:'Waiting Permission',pose:'asking'})
+  desktop.send({client:'tui',status:'Thinking',pose:'thinking'})
+  assert.equal(tui.applied.length,1);assert.equal(desktop.applied.length,1)
+  assert.equal(tui.badge.textContent,'终端 · Thinking');assert.equal(desktop.badge.textContent,'桌面 · Waiting Permission')
+})
+test('fixed client label survives no-session state without inventing work', () => {
+  const view=clientView('desktop')
+  view.send({event:'NoSessions',status:'Unknown',pose:'sleeping'})
+  assert.equal(view.badge.textContent,'桌面 · 等待会话事件')
+  assert.equal(view.applied.at(-1).pose,'sleeping')
+  view.send({client:'unknown',status:'Thinking',pose:'thinking'})
+  assert.equal(view.applied.length,1)
+})
+test('client session maps reject the opposite client and other families', () => {
+  const ctx={familyMode:'claude',familyClient:'tui',charId:'claude',sessions:{},refreshMulti:()=>{}}
+  vm.createContext(ctx);vm.runInContext(fn('setSessions','function sessionKind'),ctx)
+  vm.runInContext("setSessions('claude',{a:{client:'tui',pose:'thinking'},b:{client:'desktop',pose:'asking'}})",ctx)
+  assert.deepEqual(Object.keys(ctx.sessions.claude),['a'])
+  vm.runInContext("setSessions('gpt',{x:{client:'tui'}})",ctx)
+  assert.equal(ctx.sessions.gpt,undefined)
 })

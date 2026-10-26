@@ -49,6 +49,12 @@ static class Program
             var q = AntigravityQuota.Parse(Js(JsonDocument.Parse(File.ReadAllText(path)).RootElement));
             return q == null ? "null" : q["text"] + " | low=" + q["low"];
         }
+        string AgyBars(string name)
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "../../../../../fixtures/antigravity", name + ".json");
+            var q = AntigravityQuota.Parse(Js(JsonDocument.Parse(File.ReadAllText(path)).RootElement));
+            return q == null || !q.ContainsKey("bars") ? "null" : JsonSerializer.Serialize(q["bars"], new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        }
         var a1 = Agy("ultra-only-model");
         Check("Gemini：不可用的模型不算进额度（" + a1 + "）", a1.StartsWith("Gemini 剩余 100%") && a1.Contains(" ｜ Claude/GPT 剩余 100% |") && a1.EndsWith("low=False"));
         var a2 = Agy("gemini-used-up");
@@ -57,11 +63,28 @@ static class Program
         Check("Gemini：两个池 + 不可用模型（" + a3 + "）", a3.StartsWith("Gemini 剩余 52%") && a3.Contains(" ｜ Claude/GPT 剩余 99% |") && !a3.Contains(" 0%") && a3.EndsWith("low=False"));
 
         var s1 = Agy("summary-live");
-        Check("Gemini 汇总：两组各一行，98%（" + s1 + "）", s1.StartsWith("Gemini 剩余 100%") && s1.Contains(" ｜ Claude/GPT 剩余 98% |") && s1.EndsWith("low=False"));
+        Check("Gemini 汇总：两组各一行，98%（" + s1 + "）", s1.StartsWith("Gemini 剩余 100%") && s1.Contains(" ｜ Claude/GPT 剩余 98% · ") && s1.EndsWith("low=False"));
         var s2 = Agy("summary-gemini-used-up");
         Check("Gemini 汇总：比例被省略算 0%（" + s2 + "）", s2.StartsWith("Gemini 剩余 0%") && s2.EndsWith("low=True"));
         var s3 = Agy("summary-two-windows");
-        Check("Gemini 汇总：两个窗口各一行（" + s3 + "）", s3.StartsWith("Gemini 今日 剩余 40%") && s3.Contains(" ｜ Gemini 本周 剩余 100%") && s3.Contains(" ｜ Claude/GPT 剩余 98% |"));
+        Check("Gemini 汇总：一组两个窗口只留剩余最少的（" + s3 + "）", s3.StartsWith("Gemini 今日 剩余 40%") && !s3.Contains("本周") && s3.Contains(" ｜ Claude/GPT 剩余 98% · "));
+        var s4 = Agy("summary-multi-pool");
+        Check("Gemini 汇总：独立额度池保留名字，每组一行（" + s4 + "）", s4.StartsWith("Gemini 本周 剩余 99% · ") && s4.Contains(" ｜ Gemini 4 Argon 剩余 46%") && s4.Split('｜').Length == 3 && !s4.Contains("Five Hour"));
+        var s5 = Agy("summary-5h-tightest");
+        Check("Gemini 汇总：5h 最紧时写成「5小时」（" + s5 + "）", s5.StartsWith("Gemini 5小时 剩余 30%") && !s5.Contains("本周") && s5.Contains(" ｜ Claude/GPT 剩余 100% · "));
+        var s6 = Agy("summary-tie-5h-first"); var s7 = Agy("summary-tie-weekly-first");
+        Check("Gemini 汇总：两窗口一样紧，显示 5小时 和重置时间，不看接口顺序（" + s6 + "）", s6.StartsWith("Gemini 5小时 剩余 50% · ") && s7.StartsWith("Gemini 5小时 剩余 50% · "));
+        var s8 = Agy("summary-weekly-low");
+        Check("Gemini 汇总：周额度 ≤10% 不被 5h 盖住（" + s8 + "）", s8.StartsWith("Gemini 本周 剩余 5% · ") && s8.EndsWith("low=True"));
+        var s9 = Agy("summary-all-50");
+        Check("Gemini 汇总：每一行都带重置时间（" + s9 + "）", s9.Split(new[] { " ｜ " }, StringSplitOptions.None).Length == 3 && s9.Split(new[] { " ｜ " }, StringSplitOptions.None).All(seg => seg.Contains(" 重置")));
+        var g1 = AgyBars("summary-multi-pool");
+        Check("Gemini bars：每个窗口一项，池名 + 窗口名，同一个池挨着排（" + g1 + "）",
+            g1.IndexOf("\"label\":\"Gemini 5小时\"") < g1.IndexOf("\"label\":\"Gemini 本周\"") && g1.IndexOf("\"label\":\"Gemini 本周\"") < g1.IndexOf("\"label\":\"Argon 本周\"")
+            && g1.IndexOf("\"label\":\"Argon 本周\"") < g1.IndexOf("\"label\":\"Claude/GPT 5小时\"") && g1.Contains("\"group\":\"Argon\"") && g1.Split(new[] { "\"label\"" }, StringSplitOptions.None).Length == 6 && g1.Contains("\"reset\":17"));
+        var g2 = AgyBars("summary-no-reset");
+        Check("Gemini bars：没有重置时间就不写 reset（" + g2 + "）", g2 == "[{\"label\":\"Gemini 本周\",\"left\":0.7,\"group\":\"Gemini\"}]");
+        Check("Gemini bars：旧接口（用户状态）没有 bars", AgyBars("two-pools-with-unavailable") == "null");
         Check("Gemini 汇总：空的不显示", Agy("summary-empty") == "null");
 
         // 网页大小核对（只记日志不修正）：量两次、两次一致且和画布差 2% 以上才算对不上——拖滑块时网页还没排完，量到的是半路的数

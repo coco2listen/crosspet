@@ -96,3 +96,37 @@ test('4 行以上不管宽不宽都要收紧（底栏高度预算：3 行正常�
   assert.deepStrictEqual([0, 1, 2, 3].map(isCrowded), [false, false, false, false])
   assert.deepStrictEqual([4, 5, 6].map(isCrowded), [true, true, true])
 })
+
+const now = () => Math.floor(Date.now() / 1000)
+const bar = (label, left, group, resetIn) => ({ label, left, group, ...(resetIn == null ? {} : { reset: now() + resetIn }) })
+const H = 3600, D = 86400
+
+test('bars（Antigravity）：Gemini + Argon 一行，Claude/GPT 的 5h | 周另起一行「Agy C/G」，行名按角色名', () => {
+  const bars = [bar('Gemini 5小时', 1, 'Gemini', 5 * H), bar('Gemini 本周', 0.99, 'Gemini', 3 * D), bar('Argon 本周', 0.46, 'Argon', 4 * D),
+                bar('Claude/GPT 5小时', 1, 'Claude/GPT', 5 * H), bar('Claude/GPT 本周', 1, 'Claude/GPT', 6 * D)]
+  const list = rows({ claude: { text: '5小时 剩余 98% · 07:50 重置 ｜ 本周 剩余 99%' }, gemini: { text: '不会被用到 剩余 1%', bars } }, 'claude', ['claude', 'gemini'], nameOf)
+  assert.deepStrictEqual(list.map(r => r.name), ['Claude', 'Gemini', 'Agy C/G'])
+  assert.deepStrictEqual(list.map(r => r.id), ['claude', 'gemini', 'gemini'])
+  const [, main, cg] = list.map(text)
+  assert.match(main[0], /^周 99% · \d+\/\d+$/)       // Gemini 池：5h 满了，用最紧的周窗口；池名不重复（名字那列就是 Gemini）
+  assert.match(main[1], /^Arg 46% · \d+\/\d+$/)      // 独立池：Argon → Arg，只有一个窗口不写窗口名
+  assert.match(cg[0], /^5h 100% · \d\d:\d\d$/)       // Claude/GPT 池：每个窗口一格，短窗口在前
+  assert.match(cg[1], /^周 100% · \d+\/\d+$/)
+})
+
+test('bars 挑窗口：5h 没满就用 5h；一样紧取重置更晚的；最紧 ≤10% 时不被 5h 盖住；0 算用完', () => {
+  const one = bars => text(rows({ gemini: { text: 'x 剩余 1%', bars: [...bars, bar('Claude/GPT 本周', 1, 'Claude/GPT', D)] } }, 'gemini', ['gemini'], nameOf)[0])[0]
+  assert.match(one([bar('Gemini 5小时', 0.5, 'Gemini', H), bar('Gemini 本周', 0.5, 'Gemini', 3 * D)]), /^5h 50% · /)
+  assert.match(one([bar('Gemini 本周', 0.5, 'Gemini', 3 * D), bar('Gemini 5小时', 0.5, 'Gemini', H)]), /^5h 50% · /)
+  assert.match(one([bar('Gemini 5小时', 0.8, 'Gemini', H), bar('Gemini 本周', 0.05, 'Gemini', 3 * D)]), /^周 5% · /)
+  assert.match(one([bar('Gemini 5小时', 0, 'Gemini', H), bar('Gemini 本周', 0, 'Gemini', 3 * D)]), /^周 0% · /)   // 都用完：周更晚重置，限制你的是它
+  assert.match(one([bar('Gemini 今日', 0.4, 'Gemini', H), bar('Gemini 本周', 1, 'Gemini', 3 * D)]), /^今日 40% · /)
+})
+
+test('bars 只有一个池（Claude / GPT 这类）：一家一行、每个窗口一格，reset 可以没有；没有 bars 照旧拆 text', () => {
+  const claude = rows({ claude: { text: 'x', bars: [{ label: '5小时', left: 0.91, reset: now() + 2 * H }, { label: '本周', left: 0.59 }] } }, 'claude', ['claude'], nameOf)
+  assert.strictEqual(claude.length, 1)
+  assert.match(text(claude[0])[0], /^5h 91% · \d\d:\d\d$/)
+  assert.strictEqual(text(claude[0])[1], '周 59%')
+  assert.deepStrictEqual(text(rows({ gemini: { text: 'Gemini 剩余 80% ｜ Claude/GPT 剩余 70%', bars: [] } }, 'gemini', ['gemini'], nameOf)[0]), ['Gemini 80%', 'Claude/GPT 70%'])
+})

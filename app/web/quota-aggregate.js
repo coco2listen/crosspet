@@ -19,8 +19,51 @@
     return parts
   }
 
+  // ---- 额度条 bars → 格子 ----
+  // 一项 { label, left（剩余比例 0–1）, reset?（Unix 秒）, group? }。同一个池的窗口挨着排；group 是池名（没有就当成同一个池）
+  const pctOf = left => Math.round(Math.max(0, Math.min(1, +left || 0)) * 100)
+  function resetText(sec) {
+    const d = new Date(sec * 1000), p2 = n => String(n).padStart(2, '0')
+    return d - Date.now() < 86400e3 ? p2(d.getHours()) + ':' + p2(d.getMinutes()) : (d.getMonth() + 1) + '/' + d.getDate()
+  }
+  // 拼成和 text 一样的一段原文，交给 compact 去缩写、标红
+  const seg = (label, b) => (label ? label + ' ' : '') + '剩余 ' + pctOf(b.left) + '%' + (b.reset ? ' · ' + resetText(b.reset) + ' 重置' : '')
+  const windowOf = (b, group) => (group && b.label.startsWith(group) ? b.label.slice(group.length) : b.label).trim()
+  const POOL_SHORT = { Argon: 'Arg' }   // 池名放进格子里太长的缩短
+  const CG = /claude|gpt/i, CG_ROW = 'Agy C/G'
+
+  // 一个池只挑一个窗口放进格子（和解析端 text 的挑法一致）：5小时没满就用 5小时；否则用最紧的；
+  // 例外：最紧的 ≤10% 时不管 5小时怎样都用它；一样紧的取重置更晚的
+  function pickBar(list, group) {
+    let tight = null
+    for (const b of list) if (!tight || b.left < tight.left || (b.left === tight.left && (b.reset || 0) > (tight.reset || 0))) tight = b
+    const five = list.find(b => windowOf(b, group) === '5小时')
+    return tight.left > 0.1 && five && five.left < 1 ? five : tight
+  }
+
+  // 只有一个池（Claude / GPT 这类）：每个窗口一格，一家一行，和拆 text 的结果一样。
+  // 有几个池（Antigravity）：第一个池（角色自己的）+ 独立池（Argon 等）各一格放一行，Claude/GPT 池的各个窗口另起一行「Agy C/G」，
+  // 和 Claude / GPT 自己的「5h | 周」两格对齐
+  function barRows(bars, ownName) {
+    const groups = []
+    for (const b of bars) {
+      const g = b.group || ''
+      let e = groups.find(x => x.g === g)
+      if (!e) groups.push(e = { g, list: [] })
+      e.list.push(b)
+    }
+    if (groups.length < 2) return [{ name: ownName, cells: bars.map(b => seg(b.label, b)) }]
+    const main = [], cg = []
+    groups.forEach((e, i) => {
+      if (i > 0 && CG.test(e.g)) { e.list.forEach(b => cg.push(seg(windowOf(b, e.g), b))); return }
+      const b = pickBar(e.list, e.g), win = windowOf(b, e.g)
+      main.push(seg(i === 0 ? win : [POOL_SHORT[e.g] || e.g, e.list.length > 1 ? win : ''].filter(Boolean).join(' '), b))
+    })
+    return [main.length && { name: ownName, cells: main }, cg.length && { name: CG_ROW, cells: cg }].filter(Boolean)
+  }
+
   // quota：{ <角色 id>: { text, low } | null }；own：当前角色 id，排在最前；all：角色 id 的顺序；
-  // nameOf：id → 名字。返回 [{ id, name, cells: [parts] }]，一家 AI 一行，每个额度窗口一格（原文用「｜」隔开）。
+  // nameOf：id → 名字。返回 [{ id, name, cells: [parts] }]，一家 AI 一行（来源给了 bars 且有几个池的可以有几行），每个额度窗口一格（原文用「｜」隔开）。
   // 没有额度（没接入、没打开开关、读不到）的 AI 直接跳过，不占行
   function rows(quota, own, all, nameOf) {
     const out = []
@@ -28,6 +71,11 @@
     for (const id of [own, ...all.filter(i => i !== own).sort()]) {
       const q = quota[id]
       if (!q || !q.text) continue
+      // 来源给了结构化的额度条 bars（[{ label, left, reset?, group? }]）：不拆 text，从 bars 排版
+      if (Array.isArray(q.bars) && q.bars.length) {
+        for (const r of barRows(q.bars, nameOf(id))) out.push({ id, name: r.name, cells: r.cells.map(seg => compact(seg, !!q.low)) })
+        continue
+      }
       const cells = String(q.text).split(/\s*｜\s*/).filter(Boolean).map(seg => compact(seg, !!q.low))
       if (cells.length) out.push({ id, name: nameOf(id), cells })
     }

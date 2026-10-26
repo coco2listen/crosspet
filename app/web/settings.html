@@ -49,6 +49,7 @@ h1 { font-size: 15px; margin: 0 0 2px; }
 .outfits .pcard { height: 156px; }
 .roster .pcard { height: 92px; }
 .pcard img, .pcard .ph { position: absolute; left: 0; right: 0; top: 4px; bottom: 20px; width: 100%; height: calc(100% - 24px); object-fit: contain; }
+.roster .pcard img, .roster .pcard .ph { bottom: 0; height: calc(100% - 4px); }   /* 角色卡没有名字栏，图铺到底 */
 .pcard.avatar img { top: 0; bottom: 0; height: 100%; object-fit: cover; object-position: left bottom; }   /* 探头头像铺满整张卡，从左下角探出来 */
 .pcard.art img { top: 0; bottom: 0; height: 100%; object-fit: cover; object-position: center 25%; }   /* 带背景的整张皮肤图铺满衣服卡，裁的时候保住脸 */
 .pcard .ph { display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, var(--ink)); }
@@ -283,15 +284,17 @@ function notice(text) { toast(text) }
 function renderCharacterCards(s) {
   const cur = s.characters.find(c => c.id === s.character)
   $('outfitsTitle').textContent = cur ? `${cur.name} 的衣服` : '衣服'
-  const card = (c, accent, onClick, count) => {
+  // named：衣服卡底部写衣服名；角色卡只放头像、不写名字（名字栏会挡住扒着下边的手，loki 10-26 定），名字在悬停提示和读屏标签里
+  const card = (c, accent, onClick, count, named = true) => {
     const b = document.createElement('button')
     b.className = 'pcard' + (c.on ? ' on' : '') + (c.avatar ? ' avatar' : '') + (c.art ? ' art' : '')
     b.style.setProperty('--c', accent)
     b.title = c.name
+    b.setAttribute('aria-label', c.name)
     const placeholder = () => { const d = document.createElement('div'); d.className = 'ph'; d.textContent = [...c.name][0] || '?'; return d }
     if (c.image) { const img = document.createElement('img'); img.src = c.image; img.alt = ''; img.onerror = () => img.replaceWith(placeholder()); b.append(img) }
     else b.append(placeholder())
-    const name = document.createElement('b'); name.textContent = c.name; b.append(name)
+    if (named) { const name = document.createElement('b'); name.textContent = c.name; b.append(name) }
     if (count > 1) { const n = document.createElement('span'); n.className = 'n'; n.textContent = `${count} 套`; b.append(n) }
     b.onclick = onClick
     return b
@@ -300,7 +303,7 @@ function renderCharacterCards(s) {
   $('outfitCards').replaceChildren(...CharacterCards.outfitCards(s.characters, s.character)
     .map(o => card(o, accent, () => post({ cmd: 'skin', id: s.character, skin: o.id }))))
   $('characterCards').replaceChildren(...CharacterCards.characterCards(s.characters, s.character)
-    .map(c => card(c, c.accent, () => post({ cmd: 'skin', id: c.id, skin: '' }), c.count)))
+    .map(c => card(c, c.accent, () => post({ cmd: 'skin', id: c.id, skin: '' }), c.count, false)))
 }
 
 // 按时段换衣服：当前角色有峰谷规则、又有别的衣服时一组「高峰穿 / 空闲穿」（放在角色页，只显示当前角色的）。「不换」= 这一边不管（存的时候删掉）；

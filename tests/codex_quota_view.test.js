@@ -53,3 +53,9 @@ test('额度条样式：view 带 bars（剩余比例、重置时刻），问不�
   const noReset = view({ source: 'live', at: NOW, rateLimits: { primary: { usedPercent: 50, windowDurationMins: 300 } } }, NOW)
   assert.deepStrictEqual(noReset.bars, [{ label: '5小时', left: 0.5 }])
 })
+
+test('额度条的百分比和文字一致：used 是小数时先取整（69.5 → 文字 30%，条也是 30%，颜色同一档）', () => {
+  const v = view({ source: 'live', at: NOW, rateLimits: { primary: win(69.5, 300, NOW + 3600) } }, NOW)
+  assert.match(v.text, /剩余 30%/)
+  assert.strictEqual(v.bars[0].left, 0.3)
+})

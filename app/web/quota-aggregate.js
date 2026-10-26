@@ -88,8 +88,9 @@
     for (const id of [own, ...all.filter(i => i !== own).sort()]) {
       const q = quota[id]
       if (!q || !q.text) continue
-      // 来源给了结构化的额度条 bars（[{ label, left, reset?, group? }]）：不拆 text，从 bars 排版
-      if (Array.isArray(q.bars) && q.bars.length) {
+      // 来源给了分池的结构化额度 bars（[{ label, left, reset?, group }]，目前是 Antigravity）：不拆 text，从 bars 排版。
+      // 不分池的 bars（GPT、Claude）只给额度条样式的单家显示用；合并显示照旧拆 text，过期算满、「几点的数据」、只给最紧的那格写时间都在 text 里排好了
+      if (Array.isArray(q.bars) && q.bars.some(b => b.group)) {
         for (const r of barRows(q.bars, nameOf(id), fold)) out.push({ id, name: r.name, cells: r.cells.map(seg => compact(seg, !!q.low)) })
         continue
       }

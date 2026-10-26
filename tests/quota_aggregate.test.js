@@ -123,11 +123,10 @@ test('bars 挑窗口：5h 没满就用 5h；一样紧取重置更晚的；最紧
   assert.match(one([bar('Gemini 今日', 0.4, 'Gemini', H), bar('Gemini 本周', 1, 'Gemini', 3 * D)]), /^今日 40% · /)
 })
 
-test('bars 只有一个池（Claude / GPT 这类）：一家一行、每个窗口一格，reset 可以没有；没有 bars 照旧拆 text', () => {
-  const claude = rows({ claude: { text: 'x', bars: [{ label: '5小时', left: 0.91, reset: now() + 2 * H }, { label: '本周', left: 0.59 }] } }, 'claude', ['claude'], nameOf)
+test('bars 只有一个池（Claude / GPT 这类，没有 group）：合并显示照旧拆 text；没有 bars 也照旧拆 text', () => {
+  const claude = rows({ claude: { text: '5小时 剩余 91% ｜ 本周 剩余 59%', bars: [{ label: '5小时', left: 0.91, reset: now() + 2 * H }, { label: '本周', left: 0.59 }] } }, 'claude', ['claude'], nameOf)
   assert.strictEqual(claude.length, 1)
-  assert.match(text(claude[0])[0], /^5h 91% · \d\d:\d\d$/)
-  assert.strictEqual(text(claude[0])[1], '周 59%')
+  assert.deepStrictEqual(text(claude[0]), ['5h 91%', '周 59%'])
   assert.deepStrictEqual(text(rows({ gemini: { text: 'Gemini 剩余 80% ｜ Claude/GPT 剩余 70%', bars: [] } }, 'gemini', ['gemini'], nameOf)[0]), ['Gemini 80%', 'Claude/GPT 70%'])
 })
 
@@ -163,4 +162,14 @@ test('barCell：窗口名（5h、周、今日）不写，池名（Arg、C/G）�
   assert.deepStrictEqual(barCell(compact('Gemini 本周 剩余 40%', false)), { label: 'Gemini', pct: 40, level: 'ok' })
   assert.strictEqual(barCell(compact('余额 ¥4.96', false)), null)
   assert.deepStrictEqual([31, 30, 11, 10].map(level), ['ok', 'mid', 'mid', 'low'])
+})
+
+test('GPT、Claude 带 bars（没有 group）时，合并显示和只给 text 时一模一样（bars 只给额度条样式的单家显示用）', () => {
+  const { view } = require('../app/web/codex-quota.js')
+  const NOW = Math.floor(Date.now() / 1000)
+  const v = view({ source: 'stale', at: NOW - 3600, rateLimits: { primary: { usedPercent: 10.5, windowDurationMins: 300, resetsAt: NOW + 7200 }, secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: NOW - 60 } } }, NOW)
+  const claude = { text: '5小时 剩余 70% ｜ 本周 剩余 40% · 10/29 重置', low: false, bars: [{ label: '5小时', left: 0.7, reset: NOW + 3600 }, { label: '本周', left: 0.4, reset: NOW + 3 * 86400 }] }
+  const withBars = rows({ gpt: v, claude }, 'gpt', ['gpt', 'claude'], nameOf)
+  const textOnly = rows({ gpt: { text: v.text, low: v.low }, claude: { text: claude.text, low: claude.low } }, 'gpt', ['gpt', 'claude'], nameOf)
+  assert.deepStrictEqual(withBars.map(text), textOnly.map(text))
 })

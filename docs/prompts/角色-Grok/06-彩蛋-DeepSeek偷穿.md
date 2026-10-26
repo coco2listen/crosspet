@@ -24,7 +24,7 @@ FORMAT RULES (every image):
 - Same art style as the references: clean lineart, flat two-tone cel shading, soft palette, chibi about 2.5 heads tall, big head, round soft shapes.
 - Square image, 1024x1024 or larger. One image per file, saved under the exact filename given.
 - In caught.png and bye.png the two characters stand side by side, their outlines touching, each at the same scale as in her own reference.
-- The axe is always held, hugged, dragged or leaning against someone; it never floats, and it is the same size as in Grok's reference (taller than either girl).
+- The axe is always upright (haft vertical, spear tip up): held, hugged or leaning against someone, never dragged; it never floats, and it is the same size as in Grok's reference (taller than either girl).
 
 MAIN CHARACTER — DeepSeek, exactly as in the FIRST image (long wavy navy-to-bright-blue hair, white frilly maid headdress, navy whale-fin ears, light-blue bow, big bright-blue eyes, navy maid dress with white apron, big navy whale tail), EXCEPT she has put on Grok's things:
 - Grok's small dark crown with the gold circle-and-slash emblem, perched on top of her maid headdress, a little too big and tilted.
@@ -35,11 +35,11 @@ MAIN CHARACTER — DeepSeek, exactly as in the FIRST image (long wavy navy-to-br
 SECOND CHARACTER (only in caught.png and bye.png) — Grok, exactly as in the SECOND image (golden-blonde twin-tails, ahoge, pointed ears, bright-blue eyes, little fangs, black gothic off-shoulder dress with gold chains and black-and-red frills), but WITHOUT her crown, bat-wing bows and cape collar (DeepSeek has them) and WITHOUT the axe, except as described in bye.png. Her twin-tails are tied with plain black hair ties. Personality: sassy, quick-witted, a confident fang grin, never mean.
 
 EGG POSES:
-pop.png     — DeepSeek sneaks in dressed as Grok: tiptoeing, dragging the huge axe behind her with both hands on the end of the haft, straining a little, the crown tilted, trying to copy Grok's wide fang grin but looking very pleased with herself, tail swishing.
+pop.png     — DeepSeek sneaks in dressed as Grok, no axe: tiptoeing, both hands raised to hold the too-big tilted crown steady on her headdress, trying to copy Grok's wide fang grin but looking very pleased with herself, tail swishing.
 pretend.png — DeepSeek posing as Grok, "I checked, it's true!": one hand clinging to the top of the planted axe (her knees wobbling under its weight), the other arm holding a small black phone out at the viewer — but the phone is UPSIDE DOWN (its camera at the bottom), a confident fake grin with half-lidded eyes. Only DeepSeek is drawn.
 caught.png  — Caught! Two characters. DeepSeek on the viewer's right jolts: eyes wide, ahoge and tail sticking straight up, the crown slipping down over one eye, the axe tipping sideways but still leaning against her shoulder. Grok on the viewer's left, bare-headed, arms crossed with her own small phone held up toward DeepSeek, one eyebrow raised, an amused "is this true?" fang smirk.
 bye.png     — Giving it back. Two characters. Grok on the viewer's left has the axe slung easily over her shoulder with one hand, and with the other hand plops the crown back onto DeepSeek's head at a silly tilt, a fond cocky grin. DeepSeek on the viewer's right, sheepish and blushing, holding the two bat-wing bows out with both hands, tail drooping, a bashful smile.
-escape.png  — Nobody caught her: DeepSeek walking off toward the viewer's LEFT (face still toward the viewer), the crown askew, dragging the huge axe behind her by the haft, chin up with a proud smug smile, tail swinging. Only DeepSeek is drawn.
+escape.png  — Nobody caught her: DeepSeek walking off toward the viewer's LEFT (face still toward the viewer), no axe, one hand holding the askew crown on her head and the other making a small peace sign, chin up with a proud smug smile, tail swinging. Only DeepSeek is drawn.
 ```
 
 看稿：DeepSeek 是原版女仆装（白头饰、鲸鱼耳朵和尾巴都在），头饰上加了 Grok 的王冠和蝙蝠蝴蝶结、身后竖着红里子小披风；pretend 那张手机确实是倒着拿的；caught 里 Grok 头上空空、手里没斧头，bye 里斧头回到 Grok 肩上；两人轮廓连在一起、和各自其他立绘一样大；斧头始终有人拿着或靠着，不飘。

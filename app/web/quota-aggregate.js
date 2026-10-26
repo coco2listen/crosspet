@@ -44,7 +44,9 @@
   // 只有一个池（Claude / GPT 这类）：每个窗口一格，一家一行，和拆 text 的结果一样。
   // 有几个池（Antigravity）：第一个池（角色自己的）+ 独立池（Argon 等）各一格放一行，Claude/GPT 池的各个窗口另起一行「Agy C/G」，
   // 和 Claude / GPT 自己的「5h | 周」两格对齐
-  function barRows(bars, ownName) {
+  // fold：底栏放不下时（见 rows），Claude/GPT 池不另起一行，和独立池一样挑一格并回第一行（「C/G 周 70%」）
+  function barRows(bars, ownName, fold) {
+    const cell = (label, b) => seg(label, fold ? { left: b.left } : b)   // 并成一行时不写重置时间，不然三格太宽
     const groups = []
     for (const b of bars) {
       const g = b.group || ''
@@ -55,9 +57,10 @@
     if (groups.length < 2) return [{ name: ownName, cells: bars.map(b => seg(b.label, b)) }]
     const main = [], cg = []
     groups.forEach((e, i) => {
-      if (i > 0 && CG.test(e.g)) { e.list.forEach(b => cg.push(seg(windowOf(b, e.g), b))); return }
+      if (i > 0 && CG.test(e.g) && !fold) { e.list.forEach(b => cg.push(seg(windowOf(b, e.g), b))); return }
+      if (i > 0 && CG.test(e.g)) { const b = pickBar(e.list, e.g); const win = windowOf(b, e.g); main.push(cell('C/G ' + (SHORT[win] || win), b)); return }
       const b = pickBar(e.list, e.g), win = windowOf(b, e.g)
-      main.push(seg(i === 0 ? win : [POOL_SHORT[e.g] || e.g, e.list.length > 1 ? win : ''].filter(Boolean).join(' '), b))
+      main.push(cell(i === 0 ? win : [POOL_SHORT[e.g] || e.g, e.list.length > 1 ? win : ''].filter(Boolean).join(' '), b))
     })
     return [main.length && { name: ownName, cells: main }, cg.length && { name: CG_ROW, cells: cg }].filter(Boolean)
   }
@@ -65,7 +68,7 @@
   // quota：{ <角色 id>: { text, low } | null }；own：当前角色 id，排在最前；all：角色 id 的顺序；
   // nameOf：id → 名字。返回 [{ id, name, cells: [parts] }]，一家 AI 一行（来源给了 bars 且有几个池的可以有几行），每个额度窗口一格（原文用「｜」隔开）。
   // 没有额度（没接入、没打开开关、读不到）的 AI 直接跳过，不占行
-  function rows(quota, own, all, nameOf) {
+  function rows(quota, own, all, nameOf, fold = false) {
     const out = []
     // 其余按 id 字母序：不能指望 all 自带顺序——macOS 上角色清单是 Swift 字典序列化出来的，每次启动的顺序都不一样
     for (const id of [own, ...all.filter(i => i !== own).sort()]) {
@@ -73,12 +76,14 @@
       if (!q || !q.text) continue
       // 来源给了结构化的额度条 bars（[{ label, left, reset?, group? }]）：不拆 text，从 bars 排版
       if (Array.isArray(q.bars) && q.bars.length) {
-        for (const r of barRows(q.bars, nameOf(id))) out.push({ id, name: r.name, cells: r.cells.map(seg => compact(seg, !!q.low)) })
+        for (const r of barRows(q.bars, nameOf(id), fold)) out.push({ id, name: r.name, cells: r.cells.map(seg => compact(seg, !!q.low)) })
         continue
       }
       const cells = String(q.text).split(/\s*｜\s*/).filter(Boolean).map(seg => compact(seg, !!q.low))
       if (cells.length) out.push({ id, name: nameOf(id), cells })
     }
+    // Antigravity 拆成两行后总共超过收紧字号也放不下的行数（底栏高度预算，见 render）：把它的两行并回一行再排一次
+    if (!fold && out.length > LOOSE_ROWS + 1 && out.length > new Set(out.map(r => r.id)).size) return rows(quota, own, all, nameOf, true)
     return out
   }
 

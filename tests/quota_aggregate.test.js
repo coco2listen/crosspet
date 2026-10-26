@@ -130,3 +130,18 @@ test('bars 只有一个池（Claude / GPT 这类）：一家一行、每个窗�
   assert.strictEqual(text(claude[0])[1], '周 59%')
   assert.deepStrictEqual(text(rows({ gemini: { text: 'Gemini 剩余 80% ｜ Claude/GPT 剩余 70%', bars: [] } }, 'gemini', ['gemini'], nameOf)[0]), ['Gemini 80%', 'Claude/GPT 70%'])
 })
+
+test('bars（Antigravity）：总行数超过 4 行（底栏放不下）时，「Agy C/G」并回 Gemini 那一行，只挑一格、不写重置时间', () => {
+  const bars = [bar('Gemini 5小时', 1, 'Gemini', 5 * H), bar('Gemini 本周', 0.99, 'Gemini', 3 * D), bar('Argon 本周', 0.46, 'Argon', 4 * D),
+                bar('Claude/GPT 5小时', 1, 'Claude/GPT', 5 * H), bar('Claude/GPT 本周', 0.7, 'Claude/GPT', 6 * D)]
+  const quota = { claude: { text: '5小时 剩余 98% ｜ 本周 剩余 99%' }, gpt: { text: '5小时 剩余 12% ｜ 本周 剩余 78%' },
+                  deepseek: { text: '余额 ¥23.60' }, gemini: { text: 'x 剩余 1%', bars } }
+  const list = rows(quota, 'gemini', ['claude', 'gpt', 'deepseek', 'gemini'], nameOf)
+  assert.strictEqual(list.length, 4)
+  assert.deepStrictEqual(list.map(r => r.name), ['Gemini', 'Claude', 'DeepSeek', 'GPT'])
+  const gem = text(list[0])
+  assert.strictEqual(gem.length, 3)
+  assert.deepStrictEqual(gem, ['周 99%', 'Arg 46%', 'C/G 周 70%'])   // Claude/GPT 池按同样的规则挑一格；并成一行时不写重置时间，不然太宽
+  // 不拥挤时照旧拆成两行
+  assert.deepStrictEqual(rows({ claude: quota.claude, gemini: quota.gemini }, 'claude', ['claude', 'gemini'], nameOf).map(r => r.name), ['Claude', 'Gemini', 'Agy C/G'])
+})

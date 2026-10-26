@@ -55,7 +55,7 @@
   function of(q, nowSec) {
     if (!q || !q.text) return null
     const r = Array.isArray(q.bars) && q.bars.length ? { rows: fromBars(q.bars, nowSec), note: null } : fromText(q)
-    if (!r.rows.length) return null
+    if (!r.rows.some(x => x.kind === 'bar')) return null   // 一根条都没有（只有余额）：整块照旧按文字样式画
     if (q.note) r.note = q.note
     return r
   }
@@ -64,13 +64,15 @@
   function render(el, result) {
     const div = (cls, text) => { const d = document.createElement('div'); if (cls) d.className = cls; if (text != null) d.textContent = text; return d }
     const span = (cls, text) => { const s = document.createElement('span'); s.className = cls; if (text != null) s.textContent = text; return s }
+    const timed = result.rows.some(r => r.when)   // 有一行带重置时间就每行都留出那一格，几根条才对得齐
     el.replaceChildren(...result.rows.map(r => {
       if (r.kind === 'text') return div(r.low ? 'low' : '', r.text)
       const row = div('qbar ' + r.level)
       const track = span('qtrack'), fill = document.createElement('i')
       fill.style.width = r.pct + '%'
       track.append(fill)
-      row.append(span('ql', r.label), track, span('qp', r.pct + '%'), span('qt', r.when || ''))
+      row.append(span('ql', r.label), track, span('qp', r.pct + '%'))
+      if (timed) row.append(span('qt', r.when || ''))
       return row
     }))
     if (result.note) el.append(div('qnote', result.note))

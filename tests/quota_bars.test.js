@@ -52,8 +52,9 @@ test('拆字：「· 15:20 的数据」进 note；q.note 优先', () => {
   assert.equal(B.of({ text: 'x', bars: [{ label: '本周', left: 0.4 }], note: '15:20 的数据' }, now).note, '15:20 的数据')
 })
 
-test('拆不动的段落保留成文字行', () => {
-  assert.deepStrictEqual(B.of({ text: '余额 ¥4.96', low: true }, now).rows, [{ kind: 'text', text: '余额 ¥4.96', low: true }])
+test('拆不动的段落保留成文字行；一根条都没有（只有余额）时返回 null，整块照旧按文字样式画', () => {
+  assert.deepStrictEqual(B.of({ text: '5小时 剩余 50% ｜ 余额 ¥4.96', low: true }, now).rows[1], { kind: 'text', text: '余额 ¥4.96', low: true })
+  assert.equal(B.of({ text: '余额 ¥4.96', low: true }, now), null)
 })
 
 test('没有额度 → null', () => {

@@ -144,6 +144,8 @@ input[type=range] { width: 150px; accent-color: var(--accent); }
     <div class="ctl"><label class="switch"><input type="checkbox" data-key="quotaAggregate"><span></span></label></div></div>
   <div class="item"><div class="label">Codex 重置提醒<small>官方提前宣布重置时，GPT 的额度下方多一行；右键「会重置吗？」可以问她。数据来自第三方网站 <button class="srclink" data-action="openCodexResets">codex-resets.com</button>，根据官方推文整理，预测不是 OpenAI 的承诺</small></div>
     <div class="ctl"><label class="switch"><input type="checkbox" data-key="codexResets"><span></span></label></div></div>
+  <div class="item"><div class="label">额度显示样式<small>额度条：每个额度一条，后面是剩余百分比和重置时间，剩得越少颜色越暖（蓝 → 橙 → 红）。DeepSeek 余额照旧是文字</small></div>
+    <div class="ctl"><div class="seg" id="quotaStyle" data-key="quotaStyle"><button data-v="text">文字</button><button data-v="bars">额度条</button></div></div></div>
   <div class="item"><div class="label">额度栏显示峰谷时段<small>DeepSeek、GLM 的额度下面显示现在是高峰还是空闲（北京时间）。时间条：今天 24 小时，红色高峰、绿色空闲，竖线是现在；文字：只显示「高峰」或「空闲」。按 DeepSeek 官方 API 和 GLM 编程套餐的规则，其他渠道以各自价格为准；法定节假日暂不识别</small></div>
     <div class="ctl"><div class="seg" id="peakStyle" data-key="peakStyle"><button data-v="bar">时间条</button><button data-v="text">文字</button><button data-v="off">关</button></div></div></div>
 </div>
@@ -213,6 +215,7 @@ function setState(s) {
   for (const el of document.querySelectorAll('[data-only]')) el.classList.toggle('hidden', s[el.dataset.only] === undefined || s[el.dataset.only] === null)
   for (const b of $('aura').children) b.classList.toggle('on', b.dataset.v === s.aura)
   for (const b of $('peakStyle').children) b.classList.toggle('on', b.dataset.v === s.peakStyle)
+  for (const b of $('quotaStyle').children) b.classList.toggle('on', b.dataset.v === (s.quotaStyle || 'text'))
   renderCharacterCards(s)
   renderPeakOutfits(s)
   const cur = s.characters.find(c => c.id === s.character)
@@ -333,6 +336,7 @@ function renderPeakOutfits(s) {
 for (const el of document.querySelectorAll('input[data-key]')) el.onchange = () => post({ cmd: 'set', key: el.dataset.key, value: el.checked })
 for (const b of $('aura').children) b.onclick = () => post({ cmd: 'set', key: 'aura', value: b.dataset.v })
 for (const b of $('peakStyle').children) b.onclick = () => post({ cmd: 'set', key: 'peakStyle', value: b.dataset.v })
+for (const b of $('quotaStyle').children) b.onclick = () => post({ cmd: 'set', key: 'quotaStyle', value: b.dataset.v })
 for (const b of document.querySelectorAll('[data-action]')) b.onclick = () => post({ cmd: 'action', name: b.dataset.action })
 // 锁链图标：锁着 = 两节扣在一起；解开 = 断开
 const LINK_ON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 013.5 3.5l-1 1M9 11.5l-1 1a2.5 2.5 0 01-3.5-3.5l1-1"/></svg>'

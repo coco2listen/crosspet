@@ -102,6 +102,24 @@ html.no-name #caption { display: none; }
 #quota div { white-space: nowrap; }
 #quota.low { color: #c0392b; background: rgba(255,236,236,.92); }
 #quota .notice { color: #6b4a3a; font-weight: 600; }   /* 重置提醒那一行：不跟着额度紧张变红 */
+/* 额度条样式（quota-bars.js）：每个额度一行——名字、条、剩余百分比、重置时间；条按剩余分三档变色 */
+#quota.bars:not(:empty) { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; text-align: left; min-width: calc(170px * var(--k)); }
+#quota .qbar { display: contents; white-space: nowrap; }   /* 一行四格：名字、条、百分比、时间，各行对齐成表 */
+#quota.bars > div:not(.qbar) { grid-column: 1 / -1; }   /* 文字行（余额）、重置提醒、峰谷条、备注占满一行 */
+#quota .ql { padding-right: calc(4px * var(--k)); white-space: nowrap; }
+#quota .qtrack { min-width: calc(30px * var(--k)); height: calc(5px * var(--k)); border-radius: calc(3px * var(--k)); background: #e4dcd6; overflow: hidden; }
+#quota .qtrack i { display: block; height: 100%; border-radius: inherit; background: var(--bar); }
+#quota .qp { padding-left: calc(4px * var(--k)); font-weight: 700; color: var(--bar); text-align: right; white-space: nowrap; }
+#quota .qt { padding-left: calc(4px * var(--k)); font-size: calc(8.5px * var(--k)); color: #a8958a; white-space: nowrap; }
+#quota .qc.qbarcell { display: flex; align-items: center; gap: calc(3px * var(--k)); }   /* 合并显示里的短条格子 */
+#quota .qc.qbarcell .ql { padding-right: 0; }
+#quota .qc.qbarcell .qtrack { width: calc(34px * var(--k)); min-width: 0; flex: none; }
+#quota.tight .qc.qbarcell .qtrack { width: calc(20px * var(--k)); }   /* 四家都开、并成三格时放不下：条短一点 */
+#quota .qc.qbarcell .qp { padding-left: 0; }
+#quota .ok { --bar: #4f7fd8; }
+#quota .mid { --bar: #e0902f; }
+#quota .low { --bar: #c0392b; }
+#quota .qnote { font-size: calc(8.5px * var(--k)); color: #a8958a; }
 /* 峰谷时段（设置里选款式）。时间条：一天 24 小时，红 = 高峰、绿 = 空闲，竖线 = 现在（北京时间）；颜色要够深，浅色桌面上也看得清 */
 #quota .peak { padding: calc(2px * var(--k)) 0 0; }
 #quota .peakbar { position: relative; width: calc(150px * var(--k)); height: calc(6px * var(--k)); margin: 0 auto; border-radius: calc(3px * var(--k)); overflow: hidden; background: #7cc493; box-shadow: inset 0 0 0 calc(.5px * var(--k)) rgba(74,36,24,.35); }
@@ -200,6 +218,7 @@ addEventListener('error', e => {
 <script src="text-size.js"></script>
 <script src="codex-quota.js"></script>
 <script src="quota-aggregate.js"></script>
+<script src="quota-bars.js"></script>
 <script src="plugin-update.js"></script>
 <script src="stand-in.js"></script>
 <script src="follow-policy.js"></script>
@@ -213,6 +232,7 @@ addEventListener('error', e => {
 //   applyCharState(id, s)   某个 AI 的工作状态（各接入写的 <id>-state.json）
 //   setQuota(id, q)         某个 AI 的额度 / 余额（<id>-quota.json；GPT 走 setCodexQuota，问 Codex 服务）
 //   setQuotaAggregate(on)   额度小窗合并显示各家 AI 的额度（设置里的开关，默认关）
+//   setQuotaStyle(s)        额度怎么显示：'text' 文字（默认）/ 'bars' 额度条（quota-bars.js）
 //   setPeakStyle(s)         额度栏怎么显示峰谷时段：'bar' 时间条（默认）/ 'text' 一行文字 / 'off'（只对 peak-hours.js 里有规则的角色）
 //   setPeakSkins(map)       按时段换衣服的设置 { 角色: { peak: 皮肤, valley: 皮肤 } }（'' = 原版，没写 = 不换）
 //   handleClick(kind)       单击 = pat（摸摸头），右键菜单「戳一下」= poke
@@ -517,6 +537,8 @@ function appendResetNotice(el) {
 // ---- 峰谷时段（peak-hours.js）：额度栏下面画今天的时间条，或者一行文字；按时段换衣服见 checkPeakOutfits ----
 let peakStyle = 'bar', devPeakShift = 0
 const peakNow = () => Date.now() + devPeakShift   // 开发者控制台「峰谷换装」场景会把时间挪到切换点前
+let quotaStyle = 'text'
+function setQuotaStyle(s) { quotaStyle = s === 'bars' ? 'bars' : 'text'; renderQuota() }
 function setPeakStyle(s) { peakStyle = ['bar', 'text', 'off'].includes(s) ? s : 'bar'; renderQuota() }
 function appendPeakBar(el) {
   const rule = peakStyle !== 'off' && window.PeakHours?.RULES[charId]
@@ -638,13 +660,23 @@ function renderQuota() {
   if (quotaAggregate || reactTo) {
     let ids = Object.keys(manifest?.characters || {}).filter(id => !manifest.characters[id].egg)
     if (!quotaAggregate) ids = StandIn.quotaIds(reactTo, charId, ids)
-    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => manifest?.characters?.[id]?.name || id))
+    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => manifest?.characters?.[id]?.name || id), undefined, quotaStyle)
     appendResetNotice(el)
     appendPeakBar(el)
     return
   }
-  // 多个额度窗口 / 额度池用「｜」隔开，每个占一行，不在半中间折行
   const q = quota[charId]
+  const bars = quotaStyle === 'bars' && QuotaBars.of(q, Date.now() / 1000)
+  if (bars) {
+    QuotaBars.render(el, bars)
+    el.className = 'bars'   // 不加 low：快用完的那一行自己变红，整块不变红底
+    appendResetNotice(el)
+    appendPeakBar(el)
+    // 底栏高度预算（同 appendPeakBar）：额度条加上重置提醒、峰谷条还是放不下，就这一次按文字画，人物不被顶上去
+    const k = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--k')) || 1
+    if ($('foot').offsetHeight <= 62 * Math.max(1, k) + 0.5) return
+  }
+  // 多个额度窗口 / 额度池用「｜」隔开，每个占一行，不在半中间折行
   el.replaceChildren(...(q?.text || '').split(/\s*｜\s*/).filter(Boolean).map(t => {
     const line = document.createElement('div'); line.textContent = t; return line
   }))

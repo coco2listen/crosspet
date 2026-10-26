@@ -127,7 +127,7 @@ extension App {
             case "settings":
                 let skins = (defaults.dictionary(forKey: "skins") as? [String: String]) ?? [:]
                 out[id] = "跟随前台 \(followApps ? "开" : "关")，跟随事件 \(followEvents ? "开" : "关")，AI 干活自动出现 \(aiAutostart ? "开" : "关")，衣服 \(skins.isEmpty ? "无" : "\(skins)")，"
-                    + "峰谷换装 \(peakSkins.isEmpty ? "无" : "\(peakSkins)")，省电 \(powerSave ? "开" : "关")，彩蛋 \(eggsEnabled ? "开" : "关")，额度合并 \(quotaAggregate ? "开" : "关")，重置提醒 \(codexResets ? "开" : "关")"
+                    + "峰谷换装 \(peakSkins.isEmpty ? "无" : "\(peakSkins)")，省电 \(powerSave ? "开" : "关")，彩蛋 \(eggsEnabled ? "开" : "关")，额度合并 \(quotaAggregate ? "开" : "关")，额度样式 \(quotaStyle)，重置提醒 \(codexResets ? "开" : "关")"
             case "characters": out[id] = characterFolders()
             case "quota:gpt": out[id] = "最近一次 \(lastGptQuota)\(codexNote.isEmpty ? "" : "；" + codexNote)\n额度文件 \(file(stateDir.appendingPathComponent("gpt-quota.json")))"
             case "quota:gemini": out[id] = "找服务 \(lastAgyNote)\n额度文件 \(file(stateDir.appendingPathComponent("gemini-quota.json")))"

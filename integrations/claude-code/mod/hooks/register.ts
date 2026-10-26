@@ -169,7 +169,7 @@ function poseForTool(tool: string): string {
 }
 
 // 各窗口显示「剩余」百分比，只给剩得最少的那个标重置时间
-function quotaOf(limits: Limit[]) {
+export function quotaOf(limits: Limit[]) {
   const shown = limits.filter(l => l.kind === 'five_hour' || l.kind === 'seven_day' || l.kind === 'spend_limit')
   if (shown.length === 0) return null
   const top = shown.reduce((a, b) => (b.percentUsed > a.percentUsed ? b : a))
@@ -184,7 +184,13 @@ function quotaOf(limits: Limit[]) {
     }
     return piece
   })
-  return { text: parts.join(' ｜ '), low: top.percentUsed >= 90 }
+  // 额度条样式（CrossPet 设置里「额度显示样式：额度条」）用的结构化数据：剩余比例 0–1、重置时刻 Unix 秒
+  const bars = shown.map(l => ({
+    label: l.kind === 'five_hour' ? '5小时' : l.kind === 'seven_day' ? '本周' : '花费',
+    left: Math.max(0, 100 - Math.round(l.percentUsed)) / 100,
+    ...(l.resetsAt ? { reset: Math.round(new Date(l.resetsAt).getTime() / 1000) } : {}),
+  }))
+  return { text: parts.join(' ｜ '), low: top.percentUsed >= 90, bars }
 }
 
 export const register: Register = on => {

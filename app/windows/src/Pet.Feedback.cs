@@ -129,7 +129,7 @@ namespace CrossPet
                         case "settings":
                             var skins = Store.Settings.TryGetValue("skins", out var sv) ? Store.Json.Serialize(sv) : "{}";
                             o[id] = $"跟随前台 {(Store.Flag("followApps") ? "开" : "关")}，跟随事件 {(Store.Flag("followEvents") ? "开" : "关")}，AI 干活自动出现 {(AIAutostart ? "开" : "关")}，衣服 {skins}，"
-                                + $"峰谷换装 {(PeakSkins.Count == 0 ? "无" : Store.Json.Serialize(PeakSkins))}，省电 {(PowerSave ? "开" : "关")}，彩蛋 {(EggsEnabled ? "开" : "关")}，额度合并 {(QuotaAggregate ? "开" : "关")}，重置提醒 {(CodexResets ? "开" : "关")}";
+                                + $"峰谷换装 {(PeakSkins.Count == 0 ? "无" : Store.Json.Serialize(PeakSkins))}，省电 {(PowerSave ? "开" : "关")}，彩蛋 {(EggsEnabled ? "开" : "关")}，额度合并 {(QuotaAggregate ? "开" : "关")}，额度样式 {QuotaStyle}，重置提醒 {(CodexResets ? "开" : "关")}";
                             break;
                         case "characters": o[id] = CharacterFolders(); break;
                         case "quota:gpt": o[id] = $"最近一次 {lastGptQuota}\n额度文件 {Read(Path.Combine(Store.State, "gpt-quota.json"))}"; break;

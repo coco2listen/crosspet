@@ -48,7 +48,7 @@ namespace CrossPet
         {
             if (Window == null || concealed == c) return;
             concealed = c;
-            if (c) { Window.Opacity = 0; if (hwnd != IntPtr.Zero) Native.DropFromTop(hwnd); }
+            if (c) { openMenu?.Close(); Window.Opacity = 0; if (hwnd != IntPtr.Zero) Native.DropFromTop(hwnd); }
             else { Window.Opacity = 1; Raise(); }
             // 藏着时鼠标穿过整个窗口（只靠不透明度 0 点不透，原因见 ConcealStyle.ClickThrough）
             if (hwnd != IntPtr.Zero) Native.SetWindowLong(hwnd, Native.GWL_EXSTYLE, ConcealStyle.ClickThrough(Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE), c));

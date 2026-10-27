@@ -1,5 +1,7 @@
 # 角色：Grok（xAI）
 
+> **2026-10-27 loki 定：所有立绘都不画斧头**（GPT 画不出对称、笔直的斧头，见 [08-全部去斧头.md](08-全部去斧头.md)）。下面设定里关于斧头的部分只对设定稿和展示图有效。
+
 2026-10-24 提前准备（很多用户希望接入 Grok）。
 
 **设定来源：形象出自 B 站 ZipZipPipe**（loki 10-24 给的设定稿，存为 `docs/prompts/ref-grok.webp`；CrossPet 按其设定重新绘制，性格和专属动作是 CrossPet 的二创）。上线时 README 致谢和 `characters/LICENSE.md` 的来源表都要写上。之前 PR #25 那版「魅魔娘」Grok 没收立绘，这里以这张设定稿为准。

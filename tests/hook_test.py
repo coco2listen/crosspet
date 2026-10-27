@@ -171,6 +171,15 @@ class HookGrokTests(unittest.TestCase):
         self.fire('grok', {'hook_event_name': 'StopCancelled', 'sessionId': 's1', 'reason': 'user_interrupt'})
         self.assertEqual((self.read('grok-state.json')['pose'], self.read('grok-state.json')['event']), ('surprised', 'Stop'))
 
+    def test_shutdown_stop_after_session_end_is_ignored(self):
+        # 10-27 实测：会话关闭（SessionEnd）后 Grok 还会补发一个 reason=shutdown 的 Stop，不能把睡着的她拉回「开心」
+        self.fire('grok', {'hook_event_name': 'SessionEnd', 'session_id': 's1', 'reason': 'shutdown'})
+        self.fire('grok', {'hook_event_name': 'Stop', 'session_id': 's1', 'reason': 'shutdown', 'stop_hook_active': False})
+        self.assertEqual(self.read('grok-state.json')['pose'], 'sleeping')
+        # 真正的一轮结束（reason=end_turn）照常开心
+        self.fire('grok', {'hook_event_name': 'Stop', 'session_id': 's2', 'reason': 'end_turn', 'promptId': 'p1'})
+        self.assertEqual(self.read('grok-state.json')['pose'], 'happy')
+
     def test_permission_notification_is_asking(self):
         self.fire('grok', {'hook_event_name': 'Notification', 'sessionId': 's1', 'notificationType': 'permission_prompt'})
         self.assertEqual(self.read('grok-state.json')['pose'], 'asking')

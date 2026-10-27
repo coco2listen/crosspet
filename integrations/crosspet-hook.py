@@ -367,6 +367,11 @@ if os.environ.get("GROK_HOOK_EVENT") and character != "grok":
         ledger("dropped", "grok-imported-claude-hook")
         sys.exit(0)
     character = "grok"
+# Grok Build 关闭会话时，在 SessionEnd 之后还会补发一个 reason=shutdown 的 Stop（不是一轮做完）：
+# 演了会把刚睡着的她拉回「开心」（10-27 实测）
+if os.environ.get("GROK_HOOK_EVENT") and event.get("hook_event_name") == "Stop" and event.get("reason") == "shutdown":
+    ledger("dropped", "grok-shutdown-stop")
+    sys.exit(0)
 # Grok Build 的字段是驼峰写法；事件名（hook_event_name）已经是 Claude 的写法
 if os.environ.get("GROK_HOOK_EVENT"):
     for camel, snake in (("toolName", "tool_name"), ("toolInput", "tool_input"), ("notificationType", "notification_type")):

@@ -31,7 +31,7 @@ namespace CrossPet
             try { return web?.CoreWebView2 == null ? "null" : await web.CoreWebView2.ExecuteScriptAsync(code); }
             catch { return "null"; }
         }
-        public void Reload() { ready = false; web?.CoreWebView2?.Reload(); }
+        public void Reload() { ++followEventGeneration; ready = false; web?.CoreWebView2?.Reload(); }
         public static string Q(string s) => Store.Json.Serialize(s);
 
         /// <summary>换衣服（皮肤）：记下来，重新载入立绘；正在显示的就是她的话马上换上</summary>
@@ -49,6 +49,7 @@ namespace CrossPet
         /// <summary>why：为什么换（front 跟随前台 / event 跟随事件 / manual 菜单或设置 / skin 换衣服），记进换角色记录（反馈「角色换得不对」用）</summary>
         void SwitchTo(string id, string why, string via = "")
         {
+            ++followEventGeneration;  // 同一个角色也算新的手动选择，不能让旧的异步跟随请求盖回来。
             if (!Characters().Any(c => c.id == id)) return;
             var skin = Store.Skins != null && Store.Skins.TryGetValue(id, out var w) ? w as string ?? "" : "";
             Ledger.Append(SwitchesFile, new Dictionary<string, object> { ["from"] = current ?? "", ["to"] = id, ["skin"] = skin, ["why"] = why, ["via"] = via });
@@ -69,21 +70,7 @@ namespace CrossPet
             if (shell != frontIsShell) { frontIsShell = shell; ApplyLayer(); }
             // 多模型宿主（DeepSeek Harness、WorkBuddy、ZCode，以及接了别家接口的 Claude Code、Codex）里换了模型：
             // 它正在前台的话马上换成那个模型的角色
-            var hostChanged = false;
-            foreach (var host in new[] { "deepseek", "workbuddy", "zcode", "claude", "gpt", "qwen" })
-            {
-                try
-                {
-                    var fi = new FileInfo(Path.Combine(Store.State, host + "-host.json"));
-                    if (!fi.Exists) continue;
-                    var stamp = fi.LastWriteTimeUtc.Ticks.ToString();
-                    if (stamps.TryGetValue(host + "-host", out var old) && old == stamp) continue;
-                    if (old != null) hostChanged = true;
-                    stamps[host + "-host"] = stamp;
-                }
-                catch { }
-            }
-            if (hostChanged) FollowForeground("host");
+            if (HostRoutesChanged()) FollowForeground("host");
             var latestActive = (id: (string)null, ts: 0.0);
             // current：多模型宿主（WorkBuddy）里没有对应角色的模型，由当前角色来演；它只有状态，没有额度
             foreach (var id in Characters().Select(c => c.id).Concat(new[] { "current" }))
@@ -123,7 +110,7 @@ namespace CrossPet
                     }
                     else Js($"setQuota({Q(id)}, {json})");
                 }
-            if (latestActive.id != null && latestActive.id != current && Store.Flag("followEvents")) _ = FollowEvent(latestActive.id);
+            if (latestActive.id != null) _ = FollowEvent(latestActive.id);
             ApplyLayer();
             UpdateDock();
         }

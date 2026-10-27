@@ -27,6 +27,13 @@ namespace CrossPet
         public static bool Flag(string id) => Settings.TryGetValue(id, out var value) && value is bool b && b;
         public static void SaveSettings() { }
         public static void Log(string line) { }
+        public static Dictionary<string, object> Skins => null;
+    }
+
+    // 换角色记录、事件记录（反馈用）：这里只验路由，不写文件
+    static class Ledger
+    {
+        public static void Append(string path, IDictionary<string, object> line) { }
     }
 
     sealed class PendingEval
@@ -73,12 +80,14 @@ namespace CrossPet
         void After(int milliseconds, Action action) { }
         enum CodexWhy { TurnEnd }
         void RefreshCodexQuota(CodexWhy why) { }
+        static string SwitchesFile => "";
+        static void NotePet(string id, Dictionary<string, object> state, string result, string detail = "") { }
 
         public string Selected => current;
         public List<PendingEval> Requests => web.CoreWebView2.Pending;
         public void Tick() => Poll();
         public void Activate() => FollowForeground();
-        public void Choose(string id) => SwitchTo(id);
+        public void Choose(string id) => SwitchTo(id, "manual");
         public void ReadyAgain() => ready = true;
     }
 }

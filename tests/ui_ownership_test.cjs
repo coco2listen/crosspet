@@ -42,7 +42,7 @@ function makeEnv(html) {
     const TRANSIENT = { happy:5000, proud:6000, oops:4000, surprised:3000, pat:4000 }
     const NOT_WORKING = new Set(['idle','sleeping','asking','tired','hungry','happy','proud','oops','surprised'])
     const manifest = { characters: {gpt:{name:'GPT',greeting:'GPT hello',poses:{}},grok:{name:'Grok',greeting:'Grok hello',poses:{}},claude:{name:'Claude',greeting:'Claude hello',poses:{}}} }
-    const history = [], effectHistory = [], refreshes = []
+    const history = [], effectHistory = [], refreshes = [], petVerdicts = []
     const elements = new Map()
     function element(id) {
       if(elements.has(id)) return elements.get(id)
@@ -67,7 +67,7 @@ function makeEnv(html) {
     function capture(){return {charId,pose,bubble:$('bubble').textContent,fx:$('fx').innerHTML,fxHidden:$('fx').classList.contains('hide'),charState:JSON.parse(JSON.stringify(charState)),history:[...history],effectHistory:[...effectHistory],generation:characterGeneration}}
     function hook(id,p,event,extra={}){applyCharState(id,{pose:p,event,ts:Date.now()/1000,...extra})}
   `
-  const funcs = ['setBlinkSrc','characterTimeout','clearCharacterTimers','setFx','restPose','show','setCharacter','watchStuck','applyCharState','aiActivity','setSessions'].map(n => fn(html,n,n==='setBlinkSrc'||n==='characterTimeout'||n==='clearCharacterTimers')).join('\n')
+  const funcs = ['setBlinkSrc','characterTimeout','clearCharacterTimers','setFx','restPose','show','setCharacter','watchStuck','applyCharState','aiActivity','setSessions','noteVerdict'].map(n => fn(html,n,n==='setBlinkSrc'||n==='characterTimeout'||n==='clearCharacterTimers')).join('\n')
   vm.runInContext(setup + '\n' + funcs, context)
   const run = code => vm.runInContext(code, context)
   run(`hook('grok','idle','SessionStart');hook('claude','idle','SessionStart')`)

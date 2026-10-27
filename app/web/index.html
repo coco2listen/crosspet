@@ -644,7 +644,8 @@ function renderQuota() {
   if (quotaAggregate || reactTo) {
     let ids = Object.keys(manifest?.characters || {}).filter(id => !manifest.characters[id].egg)
     if (!quotaAggregate) ids = StandIn.quotaIds(reactTo, charId, ids)
-    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => manifest?.characters?.[id]?.name || id))
+    if (familyClient && familyMode !== 'claude') ids = ids.filter(id => id !== 'claude').concat(['claude-tui', 'claude-desktop'])
+    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => id === 'claude-tui' ? '终端 Claude' : id === 'claude-desktop' ? '桌面 Claude' : manifest?.characters?.[id]?.name || id))
     appendResetNotice(el)
     appendPeakBar(el)
     return
@@ -1220,6 +1221,14 @@ function endMulti() {
 // Fixed-source mode uses the same animation engine and all existing character assets.
 let familyMode = null, familyClient = null, seenFamilyResult = 0
 function setFamilyMode(id, client = null) { familyMode = id; familyClient = ['tui', 'desktop'].includes(client) ? client : null; document.documentElement.classList.toggle('family-mode', !!id); clearTimeout(stuckTimer) }
+// Do not label a shared legacy balance as either client's account.
+function setClientQuota(id, client, envelope) {
+  if (id !== 'claude' || !familyClient || !['tui', 'desktop'].includes(client) || (familyMode === id && client !== familyClient)) return
+  const key = familyMode === id ? id : `${id}-${client}`
+  const valid = envelope?.schema === 1 && envelope.family === id && envelope.source === 'claude-code' && envelope.client === client
+  const q = valid && envelope.quota && typeof envelope.quota.text === 'string' && envelope.quota.text.trim() ? envelope.quota : null
+  setQuota(key, q || {text: `${client === 'tui' ? '终端' : '桌面'}额度待更新`, low: false, unavailable: true})
+}
 function applyFamilyState(id, state) {
   if (id !== familyMode || (familyClient && state.client !== familyClient && !(state.event === 'NoSessions' && !state.client))) return
   const badge = $('familyStatus') || Object.assign(document.createElement('div'), {id: 'familyStatus'})

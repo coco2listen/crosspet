@@ -44,7 +44,7 @@ private final class RuntimeProbe {
     /// "families" (3 pets) or "clients" (5 pets), chosen by the harness with CROSSPET_PROBE_MODE.
     let mode = ProcessInfo.processInfo.environment["CROSSPET_PROBE_MODE"] == "clients" ? "clients" : "families"
     var petCount: Int { mode == "clients" ? 5 : 3 }
-    let keys = ["petMode", "origin", "size", "hidden", "enabled", "dock", "__runtimeProbeIdentity", "appearanceMode", "appearanceEnabled", "hideFullscreen", "skins", "showName", "auraMode", "powerSave", "codexResets"]
+    let keys = ["petMode", "origin", "size", "hidden", "enabled", "dock", "__runtimeProbeIdentity", "appearanceMode", "appearanceEnabled", "hideFullscreen", "skins", "showName", "auraMode", "powerSave", "codexResets", "outfitV1"]
 
     init(app: App, output: URL) { self.app = app; self.output = output }
     func later(_ seconds: Double, _ action: @escaping () -> Void) {
@@ -54,7 +54,7 @@ private final class RuntimeProbe {
         assertions.append(["name": name, "passed": passed, "detail": detail])
     }
     func preference(_ pet: App, _ key: String) -> UserDefaults {
-        ["enabled", "origin", "dock", "__runtimeProbeIdentity"].contains(key) ? pet.windowDefaults : pet.defaults
+        ["enabled", "origin", "dock", "__runtimeProbeIdentity", "outfitV1"].contains(key) ? pet.windowDefaults : pet.defaults
     }
     func start() {
         for key in keys { if let value = preference(app, key).object(forKey: key) { ownerValues[key] = value } }
@@ -191,10 +191,29 @@ private final class RuntimeProbe {
         func next() {
             guard !remaining.isEmpty else {
                 pet.defaults.set(previous, forKey: "skins"); app.applySharedSettings(key: "skins")
-                later(0.5) { [self] in lifecycleInitialDisabled() }; return
+                if mode == "clients", pets.count == 2 {
+                    pets[0].wear("claude", "claude-hoodie"); pets[1].wear("claude", "claude-pajamas")
+                    check("claude_outfits_independent", pets[0].selectedSkins["claude"] == "claude-hoodie" && pets[1].selectedSkins["claude"] == "claude-pajamas")
+                    check("claude_settings_show_own_outfits", (pets[0].settingsState()["characters"] as? [[String:Any]])?.first?["skin"] as? String == "claude-hoodie" && (pets[1].settingsState()["characters"] as? [[String:Any]])?.first?["skin"] as? String == "claude-pajamas")
+                    later(0.5) { [self] in
+                        let group = DispatchGroup()
+                        for (view, skin) in [(pets[0], "claude-hoodie"), (pets[1], "claude-pajamas")] {
+                            group.enter()
+                            view.web.evaluateJavaScript("[...document.querySelectorAll('#body img')].some(i=>i.classList.contains('on')&&i.complete&&i.naturalWidth>0&&i.src.includes('/characters/\(skin)/'))") { [self] value, _ in
+                                check("different_outfit_image_\(view.petId!)", value as? Bool == true); group.leave()
+                            }
+                        }
+                        group.notify(queue: .main) { [self] in
+                            for view in pets { if let value = saved.first(where: { $0.0 === view })?.4["outfitV1"] { view.windowDefaults.set(value, forKey: "outfitV1") }; view.loadCharacters() }
+                            later(0.5) { [self] in claudeClientQuotas() }
+                        }
+                    }
+                    return
+                }
+                later(0.5) { [self] in claudeClientQuotas() }; return
             }
             let skin = remaining.removeFirst()
-            pet.wear("claude", skin)
+            for view in pets { view.wear("claude", skin) }
             later(0.5) { [self] in
                 let group = DispatchGroup()
                 for view in pets {
@@ -209,6 +228,58 @@ private final class RuntimeProbe {
             }
         }
         next()
+    }
+    /// Different synthetic quotas traverse files -> native reader -> two actual renderers.
+    func claudeClientQuotas() {
+        guard mode == "clients", let tui = app.activePets.first(where: { $0.petId == "claude-tui" }), let desktop = app.activePets.first(where: { $0.petId == "claude-desktop" }) else { lifecycleInitialDisabled(); return }
+        let dir = stateDir.appendingPathComponent("clients")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let legacy = stateDir.appendingPathComponent("claude-quota.json")
+        try? Data("{\"text\":\"SHARED LEGACY 99%\"}".utf8).write(to: legacy)
+        routedFiles.append(legacy)
+        func publish(_ client: String, _ value: Int) {
+            let file = dir.appendingPathComponent("claude-\(client)-quota.json")
+            let row: [String: Any] = ["schema":1,"family":"claude","source":"claude-code","client":client,"quota":["text":"5小时 剩余 \(value)%","low":false]]
+            try? JSONSerialization.data(withJSONObject: row).write(to: file, options: .atomic)
+            routedFiles.append(file)
+        }
+        publish("tui", 15); publish("desktop", 65)
+        tui.pollClientQuota("tui"); desktop.pollClientQuota("desktop")
+        if let gpt = app.activePets.first(where: { $0.family == "gpt" }) {
+            gpt.pollClientQuota("tui"); gpt.pollClientQuota("desktop")
+            gpt.wear("gpt", "gpt-onesie")
+            check("gpt_outfits_remain_shared", app.activePets.filter { $0.family == "gpt" }.allSatisfy { !$0.independentOutfit && $0.selectedSkins["gpt"] == "gpt-onesie" })
+        }
+        later(0.4) { [self] in
+            let group = DispatchGroup()
+            for (pet, number) in [(tui,15),(desktop,65)] {
+                group.enter()
+                pet.web.evaluateJavaScript("JSON.stringify({q:quota.claude?.text,dom:document.getElementById('quota').textContent})") { [self] result, _ in
+                    let row = (result as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String:Any] }
+                    check("client_quota_render_\(pet.petId!)", row?["q"] as? String == "5小时 剩余 \(number)%" && (row?["dom"] as? String)?.contains("\(number)%") == true)
+                    group.leave()
+                }
+            }
+            group.notify(queue: .main) { [self] in
+                desktop.ready = false; desktop.pauseRealEvents = false
+                desktop.web.reload()
+                awaitReady(petCount) { [self] in
+                    desktop.web.evaluateJavaScript("quota.claude?.text === '5小时 剩余 65%'") { [self] value, _ in
+                        check("stable_client_quota_replayed_after_reload", value as? Bool == true)
+                        let file = dir.appendingPathComponent("claude-tui-quota.json")
+                        try? FileManager.default.removeItem(at: file)
+                        tui.pollClientQuota("tui")
+                        tui.web.evaluateJavaScript("quota.claude?.unavailable === true && !document.getElementById('quota').textContent.includes('99%')") { [self] value, _ in
+                            check("missing_client_quota_never_uses_shared_legacy", value as? Bool == true)
+                            for file in routedFiles { try? FileManager.default.removeItem(at: file) }
+                            routedFiles = []
+                            tui.pollClientQuota("tui"); desktop.pollClientQuota("desktop")
+                            lifecycleInitialDisabled()
+                        }
+                    }
+                }
+            }
+        }
     }
     func awaitReady(_ count: Int, until deadline: Date = Date().addingTimeInterval(12), _ done: @escaping () -> Void) {
         guard !finished else { return }
@@ -270,8 +341,8 @@ private final class RuntimeProbe {
         let family = pet.family!
         let skin = pet.skinChoices[family]?.first?.id
         check("lifecycle_skin_fixture_available", skin != nil)
-        var skins = pet.defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
-        if let skin { skins[family] = skin; pet.defaults.set(skins, forKey: "skins") }
+        if let skin { pet.wear(family, skin) }
+        let skins = pet.selectedSkins
         let origin = NSPoint(x: pet.panel.frame.minX + 7, y: pet.panel.frame.minY + 11)
         pet.panel.setFrameOrigin(origin); pet.windowDefaults.set([origin.x, origin.y], forKey: "origin")
         let dir = stateDir.appendingPathComponent("families/\(family)")
@@ -304,7 +375,7 @@ private final class RuntimeProbe {
                             check("reenabled_reuses_controller", app.activePets.contains { ObjectIdentifier($0) == identity })
                             check("reenabled_position_preserved", pet.panel.frame.origin == origin)
                             check("reenabled_size_preserved", abs(pet.web.pageZoom - 1.1) < 0.001)
-                            check("reenabled_skin_preference_preserved", pet.defaults.dictionary(forKey: "skins") as? [String: String] == skins)
+                            check("reenabled_skin_preference_preserved", pet.selectedSkins == skins)
                             pet.pauseRealEvents = false; pet.pollStates(); pet.pauseRealEvents = true
                             later(0.6) { [self] in
                                 pet.web.evaluateJavaScript("JSON.stringify({badge:document.getElementById('familyStatus')?.textContent,skin:manifest.characters[charId]?.skin||'',loaded:[...document.querySelectorAll('#body img')].some(i=>i.classList.contains('on')&&i.complete&&i.naturalWidth>0)})") { [self] value, _ in
@@ -331,7 +402,7 @@ private final class RuntimeProbe {
             group.enter()
             let code = """
             JSON.stringify((()=>{const img=[...document.querySelectorAll('#body img')].filter(i=>i.classList.contains('on'))[0]; return {
-              charId, pose, familyMode, familyClient, caption:document.getElementById('caption').textContent,
+              charId, pose, familyMode, familyClient, skin:manifest.characters[charId]?.skin||'', caption:document.getElementById('caption').textContent,
               imageLoaded:!!img&&img.complete&&img.naturalWidth>0,
               naturalWidth:img?.naturalWidth||0, image:img?.src||'', bodyClass:document.getElementById('body').className,
               badge:document.getElementById('familyStatus')?.textContent||'', pageHidden,

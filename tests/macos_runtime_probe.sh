@@ -26,6 +26,8 @@ root.set(0.9, forKey: "size"); root.synchronize()
 for (i, family) in CommandLine.arguments.dropFirst(3).enumerated() {
     let prefs = UserDefaults(suiteName: suite + ".pet." + family)!
     prefs.set(1, forKey: "familySchema")
+    if family == "claude-tui" { prefs.set("claude-hoodie", forKey: "outfitV1") }
+    if family == "claude-desktop" { prefs.set("claude-pajamas", forKey: "outfitV1") }
     prefs.set([100.0 + Double(i) * 300, 100.0], forKey: "origin")
     prefs.set([0.8, 0.9, 1.1, 1.0, 1.2][i], forKey: "size")
     prefs.synchronize()
@@ -50,6 +52,8 @@ for report in reports:
   page=initial[pet]
   assert abs(page['pageZoom']-1.0)<.001, (pet,page['pageZoom'])
   assert page['frame'][:2]==[100+i*300,100],(pet,page['frame'])
+  if pet.startswith('claude-'):
+   assert page['skin']==('claude-hoodie' if pet.endswith('tui') else 'claude-pajamas'),(pet,page['skin'])
 summary={'passed':True,'processLaunches':2,'assertionsPerLaunch':[len(r['assertions']) for r in reports],'persisted':['independent_origin','shared_scale'],'limitations':['programmatic window operations, not real mouse dragging','no hours-long stability claim']}
 (root/'restart-summary.json').write_text(json.dumps(summary,indent=2))
 print(json.dumps(summary))

@@ -16,6 +16,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var familyState: FamilyState?
     var familyPayload = ""
     var familySessionPayload = ""
+    var clientQuotaPayloads: [String: String] = [:]
     var activeInMode = true
     var hiddenForAppearance = false
     var appearanceNote = ""
@@ -30,7 +31,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         SharedPreferences.migrate(domain: preferenceDomain, shared: appPreferences)
         defaults = appPreferences
         windowDefaults = self.petId.flatMap { UserDefaults(suiteName: "\(preferenceDomain).pet.\($0)") } ?? appPreferences
-        if let family { familyState = FamilyState(family: family, client: client) }
+        if let family {
+            familyState = FamilyState(family: family, client: client)
+            if family == "claude", client != nil, windowDefaults.object(forKey: "outfitV1") == nil {
+                windowDefaults.set((defaults.dictionary(forKey: "skins") as? [String: String])?[family] ?? "", forKey: "outfitV1")
+            }
+        }
         super.init()
         userHidden = defaults.bool(forKey: "hidden")
     }

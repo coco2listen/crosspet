@@ -4,6 +4,15 @@ import ServiceManagement
 import WebKit
 
 extension App {
+    var independentOutfit: Bool { family == "claude" && client != nil }
+
+    /// Per-client outfit is the explicit exception to shared user settings; empty means the original outfit.
+    var selectedSkins: [String: String] {
+        var result = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        if independentOutfit, let family { result[family] = windowDefaults.string(forKey: "outfitV1") ?? "" }
+        return result
+    }
+
     // MARK: 角色
 
     /// 扫描 characters/<id>/：character.json + 立绘（.webp / .png）。文件名去掉 -2、-3 后缀是姿态名，idle-blink 是眨眼帧。
@@ -46,7 +55,7 @@ extension App {
             skinSprites[dir.lastPathComponent] = sp
             skinInfo[dir.lastPathComponent] = info
         }
-        let chosen = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        let chosen = selectedSkins
         for dir in dirs {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("character.json")),
                   var info = try? JSONSerialization.jsonObject(with: data) as? [String: Any], info["skinOf"] == nil else { continue }

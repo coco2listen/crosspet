@@ -68,11 +68,18 @@ extension App {
     }
     /// 换衣服（皮肤）：记下来，重新载入立绘；正在显示的就是她的话马上换上
     func wear(_ id: String, _ skin: String) {
-        var skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
-        guard (skins[id] ?? "") != skin else { return }
-        if skin.isEmpty { skins.removeValue(forKey: id) } else { skins[id] = skin }
-        defaults.set(skins, forKey: "skins")
-        owner.applySharedSettings(key: "skins")
+        if independentOutfit {
+            guard id == family, selectedSkins[id] != skin else { return }
+            windowDefaults.set(skin, forKey: "outfitV1")
+            if ready { loadCharacters(); js("refreshLook(\(quote(id)))") }
+            pushSettings()
+        } else {
+            var skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+            guard (skins[id] ?? "") != skin else { return }
+            if skin.isEmpty { skins.removeValue(forKey: id) } else { skins[id] = skin }
+            defaults.set(skins, forKey: "skins")
+            owner.applySharedSettings(key: "skins")
+        }
     }
 
     @objc func rename() {

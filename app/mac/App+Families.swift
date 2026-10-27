@@ -128,6 +128,17 @@ extension App {
         _ = try? handle.seekToEnd(); try? handle.write(contentsOf: data)
     }
 
+    func pollClientQuota(_ client: String) {
+        let file = stateDir.appendingPathComponent("clients/claude-\(client)-quota.json")
+        let text = (try? Data(contentsOf: file)).flatMap { data -> String? in
+            guard (try? JSONSerialization.jsonObject(with: data)) != nil else { return nil }
+            return String(data: data, encoding: .utf8)
+        } ?? "null"
+        guard text != clientQuotaPayloads[client] else { return }
+        clientQuotaPayloads[client] = text
+        js("setClientQuota('claude', \(quote(client)), \(text))")
+    }
+
     func pollFamilyStates() {
         guard !pauseRealEvents, let family, let state = familyState else { return }
         let dir = stateDir.appendingPathComponent("families/\(family)", isDirectory: true)
@@ -194,10 +205,16 @@ extension App {
         // Quotas keep their original source-specific paths; never consume legacy state here.
         for id in characterIds where quotaAggregate || id == family {
             guard !(id == "deepseek" && !dsQuotaEnabled) else { continue }
+            if id == "claude", let client {
+                // A family-wide legacy file cannot prove which Claude account supplied it.
+                if family == "claude" { pollClientQuota(client) }
+                else { pollClientQuota("tui"); pollClientQuota("desktop") }
+                continue
+            }
             let file = stateDir.appendingPathComponent("\(id)-quota.json")
             guard let stamp = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
                   stamp != stamps[file.path], let data = try? Data(contentsOf: file),
-                  (try? JSONSerialization.jsonObject(with: data)) != nil, let text = String(data: data, encoding: .utf8) else { continue }
+                  (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) != nil, let text = String(data: data, encoding: .utf8) else { continue }
             stamps[file.path] = stamp
             js("setQuota(\(quote(id)), \(text))")
         }

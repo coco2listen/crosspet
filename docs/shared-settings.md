@@ -1,6 +1,6 @@
 # macOS 共享设置
 
-所有窗口的用户设置使用主域 `io.github.crosspet`。每宠域只继续写 `enabled`、`origin`、`dock`；旧用户设置留在原域，供旧版本回退。固定 `family/client/petId` 由控制器决定，不从共享角色选择读取。
+通用用户设置使用主域 `io.github.crosspet`。按后续用户要求，Claude 终端/桌面的服装成为独立例外，使用各自的 `outfitV1`；其他客户端服装仍共享。每宠域继续写 `enabled`、`origin`、`dock`，Claude 客户端另写 `outfitV1`；旧用户设置留在原域，供旧版本回退。固定 `family/client/petId` 由控制器决定，不从共享角色选择读取。
 
 ## 一次性迁移
 
@@ -27,3 +27,12 @@
 Codex / Gemini 额度由主控制器查询并广播缓存；Codex 重置提醒由主控制器保留单个请求和计时器，macOS 各页面不另启联网轮询。Windows 网页的原轮询路径保留。额度查询只复用既有接口，本轮没有读取聊天或登录凭据。
 
 跟随应用在 CrossPet 运行期间扫描可执行文件及父进程，不读取命令参数。保存配置会撤销旧 `io.github.crosspet.appearance` LaunchAgent，不再安装后台监视器。CrossPet 退出后的工作启动仍由原有钩子负责。
+
+
+## Claude 客户端例外（2026-10-26 续修）
+
+首次启用独立服装时，从当前共享 Claude 服装复制一次，保留当前穿着；之后每只 Claude 只改自身服装。空字符串明确表示原版，不退回共享服装。菜单、设置页和重新启用后的渲染使用同一份本端选择；旧共享 skins 保留，供单宠、旧三宠及回退版本使用。
+
+额度显示开关仍共享，**额度数据不是用户设置**，不得因此共享不同客户端账号的读数。Claude mod 保留旧 `claude-quota.json`，并向 `clients/claude-tui-quota.json` / `clients/claude-desktop-quota.json` 原子发布 `{schema:1,family:"claude",source:"claude-code",client,quota}`。网页验证来源；缺失、来源不匹配或空额度显示本端“额度待更新”，不回退旧共享值。其他宠合并额度时分别标注“终端 Claude”“桌面 Claude”，不把两端塞回同一行。
+
+更新 App 不会热更新已运行的 Claude mod。新版独立数据要等客户端加载新 mod 后由真实 usage / session.measure 事件产生；不要靠写入合成值或中断真实任务刷新。

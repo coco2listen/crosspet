@@ -2,7 +2,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 // CrossPet × Claude Code（增强版 mod）
 // 和标准钩子输出同一种状态（<状态目录>/claude-state.json），另外多两样：
-// - 额度：session.measure 推来的 5 小时 / 每周窗口 → claude-quota.json
+// - 额度：session.measure 推来的 5 小时 / 每周窗口 → legacy claude-quota.json 和按客户端隔离的额度文件
 // - 被打断 / 出错：turn.complete 的 reason
 // - 压缩上下文：session.compact
 // - 等你回答：AskUserQuestion 提问、弹出授权框（Notification）
@@ -79,13 +79,16 @@ const familySequences = new Map<string, number>()
 const familyWrites = new Map<string, Promise<void>>()
 const familyResults = new Map<string, { status: string; pose: string; event: string; ts: number }>()
 const producerId = `claude-mod-${Date.now()}-${Math.random().toString(36).slice(2)}`
-async function familyState($: EngineInterface, sid: string, state: State): Promise<void> {
-  if (!sid) return
-  // Only the host's explicit entrypoint decides the client; an unrecognised value stays unknown.
+async function clientOf($: EngineInterface): Promise<'tui' | 'desktop' | 'unknown'> {
+  // Use the same explicit origin evidence for state and quota; never infer from the account or model.
   const requestedClient = await $.env.get('CROSSPET_CLIENT')
   const entrypoint = await $.env.get('CLAUDE_CODE_ENTRYPOINT')
-  const client = requestedClient === 'tui' || requestedClient === 'desktop' ? requestedClient
+  return requestedClient === 'tui' || requestedClient === 'desktop' ? requestedClient
     : entrypoint === 'claude-desktop' ? 'desktop' : entrypoint === 'cli' || entrypoint === 'sdk-cli' ? 'tui' : 'unknown'
+}
+async function familyState($: EngineInterface, sid: string, state: State): Promise<void> {
+  if (!sid) return
+  const client = await clientOf($)
   const previous = familyWrites.get(sid) ?? Promise.resolve()
   const sequence = (familySequences.get(sid) ?? 0) + 1
   familySequences.set(sid, sequence)
@@ -211,6 +214,36 @@ function quotaOf(limits: Limit[]) {
   return { text: parts.join(' ｜ '), low: top.percentUsed >= 90 }
 }
 
+const quotaWrites = new Map<string, Promise<void>>()
+let quotaSequence = 0
+async function publishQuota($: EngineInterface, limits: Limit[]): Promise<void> {
+  const quota = quotaOf(limits)
+  // Existing single-pet consumers retain their original path. An explicit empty measurement
+  // clears its old value instead of silently leaving a quota from a previous session/account.
+  await write($, `${ID}-quota.json`, quota)
+  if (await $.env.get('LOCALAPPDATA')) return
+  const client = await clientOf($)
+  const directory = `${await stateDir($)}/clients`
+  const target = `${directory}/claude-${client}-quota.json`
+  const sequence = ++quotaSequence
+  const snapshot = { schema: 1, family: ID, source: 'claude-code', client, quota }
+  const previous = quotaWrites.get(target) ?? Promise.resolve()
+  const pending = previous.catch(() => {}).then(async () => {
+    // Engine fs.write's parent-directory behavior is not part of our contract.
+    const created = await $.process.run(['/bin/mkdir', '-p', directory], { timeoutMs: 5000 })
+    if (created.exitCode !== 0) throw new Error('CrossPet quota directory creation failed')
+    const temp = `${target}.${producerId}.${sequence}.tmp`
+    await $.fs.write(temp, JSON.stringify(snapshot))
+    const moved = await $.process.run(['/bin/mv', '-f', temp, target], { timeoutMs: 5000 })
+    if (moved.exitCode !== 0) throw new Error('CrossPet quota atomic publish failed')
+  // Publishing a cosmetic quota must not interrupt a Claude hook; a failed publish
+  // leaves the previous complete client file intact, and the next measurement can retry.
+  }).catch(() => {})
+  quotaWrites.set(target, pending)
+  await pending
+  if (quotaWrites.get(target) === pending) quotaWrites.delete(target)
+}
+
 export const register: Register = on => {
   // SDK callbacks can overlap across sessions and outlive a completed turn.
   // This is a local generation fence, not a claimed provider turn identifier.
@@ -227,8 +260,7 @@ export const register: Register = on => {
     void ensurePet($).catch(() => {})
     await setState($, { pose: 'idle', event: 'SessionStart', tool: '', ts: Date.now() / 1000 })
     const usage = await $.session.usage()
-    const q = quotaOf(usage.rateLimits)
-    if (q) await write($, `${ID}-quota.json`, q)
+    await publishQuota($, usage.rateLimits)
     return next(e)
   })
 
@@ -303,8 +335,7 @@ export const register: Register = on => {
   })
 
   on('session.measure', async ($, e, next) => {
-    const q = quotaOf(e.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })))
-    if (q) await write($, `${ID}-quota.json`, q)
+    await publishQuota($, e.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })))
     return next(e)
   })
 }

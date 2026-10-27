@@ -250,7 +250,7 @@ extension App {
         applySizes(anchor: .corner)   // 解锁过文字大小的：按画布重设窗口，左下角不动（锁着的尺寸不变）
         updatePageHidden()
         stamps = [:]
-        familyPayload = ""; familySessionPayload = ""
+        familyPayload = ""; familySessionPayload = ""; clientQuotaPayloads = [:]
         pollStates()
         owner.updateSharedResets()
         refreshCodexQuota(.now)

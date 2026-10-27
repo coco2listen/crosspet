@@ -30,7 +30,7 @@ extension App {
             let switchItem = NSMenuItem(title: "换角色", action: nil, keyEquivalent: "")
             let sub = NSMenu()
             // 有别的衣服（皮肤）的角色展开成几项：「DeepSeek · 女仆装」「DeepSeek · Claude 卫衣」
-            let worn = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+            let worn = selectedSkins
             for id in characterIds where family == nil || family == id {
                 let name = displayNames[id] ?? id
                 let outfits: [(skin: String, title: String)] = skinChoices[id].map { skins in

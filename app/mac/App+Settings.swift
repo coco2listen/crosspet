@@ -153,12 +153,12 @@ extension App {
             "edgeDock": edgeDockEnabled, "dsQuota": dsQuotaEnabled, "quotaAggregate": quotaAggregate, "codexResets": codexResets, "peakStyle": peakStyle, "peakSkins": peakSkins, "powerSave": powerSave,
             "hideHotkey": hideHotkey, "hotkeyFailed": owner.hotkeyFailed, "hotkeys": [["id": "off", "label": "不用快捷键"]] + Self.hotkeyChoices.map { ["id": $0.id, "label": $0.label] },
             "aiAutostart": aiAutostart, "appearanceMode": appearanceMode, "appearanceEnabled": appearanceMaster, "appearanceNote": owner.appearanceNote,
-            "character": defaults.string(forKey: "character") ?? characterIds.first ?? "",
-            "characters": characterIds.map { id -> [String: Any] in
+            "character": (independentOutfit ? family : nil) ?? defaults.string(forKey: "character") ?? characterIds.first ?? "",
+            "characters": characterIds.filter { !independentOutfit || $0 == family }.map { id -> [String: Any] in
                 var c: [String: Any] = ["id": id, "name": names[id] ?? defaultNames[id] ?? id, "defaultName": defaultNames[id] ?? id, "custom": names[id] ?? ""]
                 if let skins = skinChoices[id], !skins.isEmpty {   // 有别的衣服：原版排第一
                     c["skins"] = [["id": "", "name": baseOutfit[id] ?? "原版"]] + skins.map { ["id": $0.id, "name": $0.name] }
-                    c["skin"] = (defaults.dictionary(forKey: "skins") as? [String: String])?[id] ?? ""
+                    c["skin"] = selectedSkins[id] ?? ""
                 }
                 return c
             },

@@ -5,7 +5,8 @@
 ;(function (root) {
   const LIST = [
     { version: '1.3.8', items: [
-      { icon: '😈', title: '新角色：Grok', text: '扛着 X 大斧、爱查证爱抬杠的哥特小恶魔女王：说话直、敢怼，闲着会把手机怼到你面前「@grok is this true? 真的」。别家程序里用 Grok 模型时自动换成她，也可以在「角色」页手动选。还藏着一个彩蛋：DeepSeek 偷戴她的王冠……', go: { tab: 'character' } },
+      { icon: '😈', title: '新角色：Grok', text: '扛着 X 大斧、爱查证爱抬杠的哥特小恶魔女王：说话直、敢怼，闲着会把手机怼到你面前「@grok is this true? 真的」。Grok Build 里干活时跟着做动作（在「接入 AI」页接入），别家程序里用 Grok 模型时也自动换成她。还藏着一个彩蛋：DeepSeek 偷戴她的王冠……', go: { tab: 'character' } },
+      { icon: '🔌', title: '接入 Cursor', text: 'Cursor 里干活时她也会跟着动：用 Claude 模型演 Claude、GPT 模型演 GPT……换模型她就换人，Cursor 自家的模型由当前角色来演。在「接入 AI」页点一下 Cursor 就好，新开的对话生效。', go: { tab: 'ai' } },
       { icon: '🃏', title: '角色页改成卡片墙', text: '右键「换角色…」打开角色页：上面一排是她的每套衣服，下面一排是所有角色，看着卡片点一下就换。名字和峰谷换装也搬到了这一页。', go: { tab: 'character' } },
       { icon: '📊', title: '额度条', text: '额度可以换成进度条显示：每个额度一条，后面是剩余百分比和重置时间，剩得越少颜色越暖（蓝 → 橙 → 红）。在「额度」页把「额度显示样式」换成「额度条」。', go: { tab: 'quota', key: 'quotaStyle' } },
     ] },

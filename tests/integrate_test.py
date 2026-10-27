@@ -274,6 +274,44 @@ DSH_PROVIDER = """- insert:
 DSH_OURS_ONLY = "    - id: crosspet\n      name: '@local/dsh-plugin-crosspet'\n"
 
 
+class GrokIntegrationTests(unittest.TestCase):
+    """Grok Build：CrossPet 单独占 ~/.grok/hooks/crosspet.json，接入写它、撤销删它，用户自己的钩子文件不动"""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix='crosspet-grok-integration-')
+        self.addCleanup(self.tmp.cleanup)
+        self.grok_home = Path(self.tmp.name) / '.grok'
+        patch = mock.patch.multiple(integrate, GROK_HOME=self.grok_home, GROK_HOOKS=self.grok_home / 'hooks/crosspet.json')
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def run_target(self, install):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            integrate.grok(install)
+        return out.getvalue()
+
+    def test_skips_when_grok_build_is_not_installed(self):
+        self.assertIn('没找到 Grok Build', self.run_target(True))
+        self.assertFalse(self.grok_home.exists())
+        self.assertFalse(integrate.has_grok())
+
+    def test_install_idempotent_and_uninstall_keeps_user_hooks(self):
+        (self.grok_home / 'hooks').mkdir(parents=True)
+        (self.grok_home / 'config.toml').write_text('', encoding='utf-8')
+        mine = self.grok_home / 'hooks/my-guard.json'
+        mine.write_text('{"hooks": {"PreToolUse": []}}', encoding='utf-8')
+        self.run_target(True)
+        first = integrate.load_json(integrate.GROK_HOOKS)
+        self.assertTrue(integrate.has_grok())
+        self.assertIn('StopCancelled', first['hooks'])
+        self.assertTrue(all(g['hooks'][0]['command'].endswith(' grok') for groups in first['hooks'].values() for g in groups))
+        self.run_target(True)
+        self.assertEqual(integrate.load_json(integrate.GROK_HOOKS), first)
+        self.run_target(False)
+        self.assertFalse(integrate.GROK_HOOKS.exists())
+        self.assertFalse(integrate.has_grok())
+        self.assertEqual(mine.read_text(encoding='utf-8'), '{"hooks": {"PreToolUse": []}}')
+
+
 class DeepSeekPatchTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

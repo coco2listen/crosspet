@@ -132,5 +132,66 @@ class HookModelHostTests(unittest.TestCase):
         self.assertTrue((self.state / 'seen-qwen').exists())
 
 
+
+class HookGrokTests(unittest.TestCase):
+    """Grok Build：字段是驼峰写法（sessionId / toolName / toolInput），每个钩子进程都带 GROK_HOOK_EVENT；
+    它还会读 ~/.claude/settings.json 里的钩子，那边的 CrossPet 钩子会被它以 claude 的名义触发"""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.data, self.state, self.grok_home = root / 'data', root / 'state', root / 'grok'
+        for d in (self.data, self.state, self.grok_home):
+            d.mkdir()
+        for cid in ('grok', 'claude'):
+            c = self.data / 'characters' / cid
+            c.mkdir(parents=True)
+            (c / 'character.json').write_text('{}', encoding='utf-8')
+            (c / 'idle.webp').write_bytes(b'x')
+    def tearDown(self):
+        self.tmp.cleanup()
+    def fire(self, character, event, grok=True):
+        env = dict(os.environ, CROSSPET_DATA_DIR=str(self.data), CROSSPET_STATE_DIR=str(self.state), GROK_HOME=str(self.grok_home))
+        env.pop('GROK_HOOK_EVENT', None)
+        if grok:
+            env['GROK_HOOK_EVENT'] = 'pre_tool_use'
+        p = subprocess.run([sys.executable, str(HOOK), character], input=json.dumps(event).encode(), capture_output=True, env=env)
+        self.assertEqual(p.returncode, 0, p.stderr.decode('utf-8', 'replace'))
+    def read(self, name):
+        try:
+            return json.loads((self.state / name).read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            return None
+
+    def test_camel_case_tools(self):
+        for tool, pose in (('run_terminal_command', 'running'), ('read_file', 'reading'), ('search_replace', 'writing'), ('web_search', 'searching')):
+            self.fire('grok', {'hook_event_name': 'PreToolUse', 'sessionId': 's1', 'toolName': tool, 'toolInput': {}})
+            self.assertEqual(self.read('grok-state.json')['pose'], pose, tool)
+
+    def test_stop_cancelled_is_interrupt(self):
+        self.fire('grok', {'hook_event_name': 'StopCancelled', 'sessionId': 's1', 'reason': 'user_interrupt'})
+        self.assertEqual((self.read('grok-state.json')['pose'], self.read('grok-state.json')['event']), ('surprised', 'Stop'))
+
+    def test_permission_notification_is_asking(self):
+        self.fire('grok', {'hook_event_name': 'Notification', 'sessionId': 's1', 'notificationType': 'permission_prompt'})
+        self.assertEqual(self.read('grok-state.json')['pose'], 'asking')
+
+    def test_claude_hook_fired_by_grok_plays_grok(self):
+        # 只接了 Claude 钩子、没单独接 Grok：Grok 干活时由 Grok 来演，不能当成 Claude
+        self.fire('claude', {'hook_event_name': 'PreToolUse', 'sessionId': 's1', 'toolName': 'read_file', 'toolInput': {}})
+        self.assertEqual(self.read('grok-state.json')['pose'], 'reading')
+        self.assertIsNone(self.read('claude-state.json'))
+
+    def test_claude_hook_fired_by_grok_is_dropped_when_grok_is_integrated(self):
+        # 两边都接了：Grok 自己那份会演，Claude 那份丢掉，免得演两遍
+        (self.grok_home / 'hooks').mkdir()
+        (self.grok_home / 'hooks' / 'crosspet.json').write_text('{"hooks": {}}', encoding='utf-8')
+        self.fire('claude', {'hook_event_name': 'PreToolUse', 'sessionId': 's1', 'toolName': 'read_file', 'toolInput': {}})
+        self.assertIsNone(self.read('grok-state.json'))
+        self.assertIsNone(self.read('claude-state.json'))
+
+    def test_real_claude_is_untouched(self):
+        self.fire('claude', {'hook_event_name': 'PreToolUse', 'session_id': 's1', 'tool_name': 'Read', 'tool_input': {}}, grok=False)
+        self.assertEqual(self.read('claude-state.json')['pose'], 'reading')
+
 if __name__ == '__main__':
     unittest.main()

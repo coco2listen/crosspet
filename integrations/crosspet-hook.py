@@ -358,6 +358,21 @@ if event.get("cursor_version") and cursor_bridge_installed():
     ledger("dropped", "cursor-imported-claude-hook")
     sys.exit(0)
 
+# Grok Build：每个钩子进程都带 GROK_HOOK_EVENT。它还会读 ~/.claude/settings.json 的钩子，那边的 CrossPet 钩子
+# 就会以 claude 的名义被它触发：单独接入了 Grok（~/.grok/hooks/crosspet.json）时丢掉，免得同一件事演两遍；
+# 没接入时改成 Grok 来演，不能让 Grok 的活算到 Claude 头上
+if os.environ.get("GROK_HOOK_EVENT") and character != "grok":
+    grok_home = Path(os.environ.get("GROK_HOME") or Path.home() / ".grok")
+    if (grok_home / "hooks" / "crosspet.json").exists():
+        ledger("dropped", "grok-imported-claude-hook")
+        sys.exit(0)
+    character = "grok"
+# Grok Build 的字段是驼峰写法；事件名（hook_event_name）已经是 Claude 的写法
+if os.environ.get("GROK_HOOK_EVENT"):
+    for camel, snake in (("toolName", "tool_name"), ("toolInput", "tool_input"), ("notificationType", "notification_type")):
+        if camel in event and snake not in event:
+            event[snake] = event[camel]
+
 # Codex 会在对话结束后自己在后台整理记忆（工作目录在 ~/.codex/memories），也会调工具，但不是你让它干的活，
 # 而且没有开始 / 结束事件，演了会一直停在思考：工作目录在 Codex 自己的配置目录里的事件都不管
 if character == "gpt":
@@ -433,7 +448,7 @@ except OSError:
 
 # ---- 按轮次丢掉迟到的事件（Codex：事件带 turn_id；PR #26 @KQYaili 报的）----
 # 沿用上游的会话 + 轮次账本。子任务另记首次看到时所属的主轮次，换轮后不重新归属。
-TURN_END = ("Stop", "StopFailure", "Interrupt", "SessionEnd")
+TURN_END = ("Stop", "StopFailure", "StopCancelled", "Interrupt", "SessionEnd")
 TURN_KEEP = 24 * 3600
 
 
@@ -801,8 +816,8 @@ elif name in ("StopFailure",):
     pose = "oops"
     name = "Stop"
     set_turn_tools(0)
-elif name in ("Interrupt",):
-    # 被你打断（Codex 的 Interrupt）：吓一跳，然后回去待机；网页把 Stop + surprised 当成「被打断」
+elif name in ("Interrupt", "StopCancelled"):
+    # 被你打断（Codex 的 Interrupt、Grok Build 的 StopCancelled）：吓一跳，然后回去待机；网页把 Stop + surprised 当成「被打断」
     pose = "surprised"
     name = "Stop"
     set_turn_tools(0)

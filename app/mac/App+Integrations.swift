@@ -18,6 +18,7 @@ extension App {
         ("hermes", "Hermes Agent", "按当前模型换角色；新开的会话生效"),
         ("cursor", "Cursor", "按当前模型换角色；认不出的模型由当前角色来演"),
         ("qwen", "Qwen Code（阿里）", "按当前模型换角色；新开的会话生效"),
+        ("grok", "Grok Build（xAI）", "新开的会话生效；新文件夹第一次用要在 Grok 里 /hooks-trust 信任一次"),
     ]
     var integrateScript: URL? {
         let url = Bundle.main.resourceURL!.appendingPathComponent("tools/integrate.py")
@@ -62,7 +63,7 @@ extension App {
     // 钩子 / 插件每收到一条事件就在状态目录写 seen-<名字>（时间戳）。状态目录 /tmp 重启会清空，所以桌宠把读到的最新时间存进设置。
     // 设置里据此标出「接上了但从没收到过消息」，反馈里也带着
     static let seenKeys = ["claude-hooks": "claude", "claude-mod": "claude-mod", "codex": "gpt", "deepseek": "deepseek", "gemini": "gemini",
-                           "antigravity": "antigravity", "workbuddy": "workbuddy", "zcode": "zcode", "hermes": "hermes", "qwen": "qwen", "cursor": "cursor"]
+                           "antigravity": "antigravity", "workbuddy": "workbuddy", "zcode": "zcode", "hermes": "hermes", "qwen": "qwen", "cursor": "cursor", "grok": "grok"]
     var lastSeen: [String: Double] {
         get { (defaults.dictionary(forKey: "seen") as? [String: Double]) ?? [:] }
         set { defaults.set(newValue, forKey: "seen") }

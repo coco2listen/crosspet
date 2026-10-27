@@ -855,10 +855,11 @@ def cursor_ours(entry) -> bool:
 
 
 def cursor_character(entry):
-    """Read only our optional final character argument; do not execute a shell command."""
+    """Read only our optional final character argument; do not execute a shell command.
+    没写角色参数（默认）返回空串：认不出的模型由当前角色来演"""
     match = re.search(r'''crosspet-cursor-bridge\.py["']?(?:\s+(?:"([\w-]+)"|'([\w-]+)'|([\w-]+)))?\s*$''',
                       str(entry.get("command", "")))
-    return next((arg for arg in match.groups() if arg is not None), "gpt") if match else None
+    return next((arg for arg in match.groups() if arg is not None), "") if match else None
 
 
 def merge_cursor_hooks(target: Path) -> bool:
@@ -873,7 +874,7 @@ def merge_cursor_hooks(target: Path) -> bool:
     if None in roles or len(roles) > 1:
         print(f"  ！{target} 的 CrossPet 角色参数不一致或命令格式无法识别，保留原配置；请先统一桥接命令末尾的角色 id 后再更新")
         return False
-    character = next(iter(roles), "gpt")
+    character = next(iter(roles), "")
     # 先检查新模板会使用的事件，避免发现旧的分组格式时只更新了一半。
     template_events = load_json(REPO / "integrations/cursor/hooks.json")["hooks"]
     for event in template_events:
@@ -893,7 +894,8 @@ def merge_cursor_hooks(target: Path) -> bool:
             del hooks[event]
     for event, entries in load_cursor_template()["hooks"].items():
         for entry in entries:
-            entry["command"] = entry["command"].rsplit(" ", 1)[0] + " " + character
+            if character:
+                entry["command"] += " " + character
         hooks[event] = hooks.get(event, []) + entries
     backup(target)
     save_json(target, data)
@@ -941,7 +943,7 @@ def cursor(install: bool) -> None:
         if not found(CURSOR_HOOKS.parent, "Cursor", ("hooks.json",)):
             return
         if merge_cursor_hooks(CURSOR_HOOKS):
-            print("  → 新开的 Cursor 对话生效。首次默认演 GPT；更新保留已有角色 id")
+            print("  → 新开的 Cursor 对话生效。按当前模型换角色，认不出的由当前角色来演；更新保留已有角色 id")
     else:
         remove_cursor_hooks(CURSOR_HOOKS)
 

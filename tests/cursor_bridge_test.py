@@ -42,6 +42,71 @@ class CursorBridgeTest(unittest.TestCase):
         path = self.state / name
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
+    # ---- 按 Cursor 里选的模型换角色（事件里每条都带 model / model_id）----
+    def install(self, *ids):
+        for cid in ids:
+            d = Path(self.env["CROSSPET_DATA_DIR"]) / "characters" / cid
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "character.json").write_text("{}", encoding="utf-8")
+            (d / "idle.webp").write_bytes(b"x")
+
+    def fire(self, args, kind, conv="C1", gen="G1", **extra):
+        event = {"hook_event_name": kind, "conversation_id": conv, "generation_id": gen, **extra}
+        result = subprocess.run([sys.executable, str(BRIDGE), *args], input=json.dumps(event), text=True,
+                                capture_output=True, env=self.env, timeout=10)
+        self.assertEqual((result.returncode, result.stdout.strip(), result.stderr), (0, "{}", ""))
+
+    def test_model_rule_matches_hook(self):
+        """桥里那份按模型选角色的规则和 crosspet-hook.py 的必须一样（两边各自是独立脚本，没法互相 import）"""
+        import ast
+        def load(path):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "character_for_model")
+            scope = {}
+            exec(compile(ast.Module([node], []), str(path), "exec"), scope)
+            return scope["character_for_model"]
+        bridge, hook = load(BRIDGE), load(BRIDGE.parent.parent / "crosspet-hook.py")
+        for model in ("claude-opus-4-7", "claude-4.5-sonnet-thinking", "gpt-5-codex", "o3", "gemini-2.5-pro", "grok-code-fast-1",
+                      "deepseek-v3.1", "glm-4.6", "qwen3-coder", "kimi-k2", "composer-1", "auto", "cursor-small", ""):
+            self.assertEqual(bridge(model), hook(model), model)
+
+    def test_model_picks_character(self):
+        self.install("claude", "gpt", "grok")
+        for model, model_id, want in (("claude-opus-4-7-thinking-max", "claude-opus-4-7", "claude"),
+                                      ("gpt-5-codex", "", "gpt"), ("grok-code-fast-1", "", "grok")):
+            with self.subTest(model=model):
+                extra = {"model": model, **({"model_id": model_id} if model_id else {})}
+                self.fire([], "afterAgentThought", conv=model, **extra)
+                self.assertEqual(self.read(f"{want}-state.json")["pose"], "thinking")
+                self.assertEqual(self.read("cursor-host.json")["character"], want)
+
+    def test_unknown_model_uses_given_character_or_current(self):
+        self.install("claude", "gpt")
+        # Cursor 自家的 Composer / Auto：认不出，用接入时指定的角色
+        self.fire(["gpt"], "afterAgentThought", model="composer-1")
+        self.assertEqual(self.read("gpt-state.json")["pose"], "thinking")
+        self.assertEqual(self.read("cursor-host.json")["character"], "gpt")
+        # 没指定角色：由当前角色来演，切到 Cursor 时也不换人
+        self.fire([], "afterAgentThought", conv="C2", model="auto")
+        self.assertEqual(self.read("current-state.json")["pose"], "thinking")
+        self.assertIsNone(self.read("cursor-host.json")["character"])
+
+    def test_model_without_artwork_falls_back(self):
+        self.install("gpt")
+        self.fire(["gpt"], "afterAgentThought", model="claude-4.5-sonnet")   # Claude 没装立绘
+        self.assertEqual(self.read("gpt-state.json")["pose"], "thinking")
+        self.assertIsNone(self.read("claude-state.json"))
+
+    def test_cards_follow_each_conversation_model(self):
+        self.install("claude", "gpt")
+        self.fire([], "afterAgentThought", conv="A", model="claude-opus-4-7")
+        self.fire([], "afterAgentThought", conv="B", model="gpt-5")
+        cards = lambda cid: {k for k in (self.read(f"{cid}-sessions.json") or {}) if k.startswith("cursor_")}
+        self.assertEqual((len(cards("claude")), len(cards("gpt"))), (1, 1))
+        # 会话 A 中途换成 GPT 模型：卡片从 Claude 那边挪到 GPT 这边，不留在两边
+        self.fire([], "afterAgentThought", conv="A", gen="G2", model="gpt-5")
+        self.assertEqual((len(cards("claude")), len(cards("gpt"))), (0, 2))
+
     def test_turn_shows_tools_then_finishes(self):
         self.assertEqual(self.send("afterAgentThought")["pose"], "thinking")
         state = self.send("postToolUse", tool_name="Read")
@@ -140,11 +205,12 @@ class CursorBridgeTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(BRIDGE)], input=json.dumps(payload), text=True,
                                 capture_output=True, env=self.env, timeout=10)
         self.assertEqual((result.returncode, result.stdout.strip(), result.stderr), (0, "{}", ""))
-        self.assertEqual(self.read("gpt-state.json")["after"], "reading")
-        self.assertEqual(self.read("cursor-host.json")["character"], "gpt")
+        # 没指定角色、事件里也没模型：由当前角色来演（current），切到 Cursor 时不换人
+        self.assertEqual(self.read("current-state.json")["after"], "reading")
+        self.assertIsNone(self.read("cursor-host.json")["character"])
         self.assertTrue((self.state / "seen-cursor").exists())
-        self.assertFalse((self.state / "seen-gpt").exists())
-        self.assertFalse(self.read("cursor-bridge-status.json")["artwork_ready"])
+        self.assertFalse((self.state / "seen-current").exists())
+        self.assertTrue(self.read("cursor-bridge-status.json")["artwork_ready"])
 
     def test_custom_character_heartbeats_stay_cursor_owned(self):
         self.send("postToolUse", tool_name="Read")
@@ -160,7 +226,7 @@ class CursorBridgeTest(unittest.TestCase):
         def write(source):
             payload = ({"hook_event_name": "postToolUse", "conversation_id": "cursor-test", "generation_id": "G1", "tool_name": "Read"}
                        if source == "cursor" else {"hook_event_name": "PreToolUse", "session_id": "codex-test", "turn_id": "T1", "tool_name": "read_file"})
-            command = [sys.executable, str(BRIDGE)] if source == "cursor" else [sys.executable, str(hook), "gpt"]
+            command = [sys.executable, str(BRIDGE), "gpt"] if source == "cursor" else [sys.executable, str(hook), "gpt"]
             result = subprocess.run(command, input=json.dumps(payload), text=True, encoding="utf-8",
                                     capture_output=True, env=self.env, timeout=10)
             self.assertEqual((result.returncode, result.stderr), (0, ""))

@@ -163,7 +163,8 @@ class CursorIntegrationTests(unittest.TestCase):
         integrate.save_json(self.target, original)
         self.assertTrue(self.run_merge()[0])
         first = integrate.load_json(self.target)
-        self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(first)}, {'gpt'})
+        # 默认不带角色参数：认不出的模型由当前角色来演
+        self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(first)}, {''})
         self.assertEqual(len(self.ours(first)), 12)
         self.assertTrue(self.run_merge()[0])
         self.assertEqual(integrate.load_json(self.target), first)
@@ -218,7 +219,7 @@ class CursorIntegrationTests(unittest.TestCase):
                 integrate.save_json(self.target, {'version': 1, 'hooks': {'stop': [
                     {'command': f'python "old/crosspet-cursor-bridge.py" {role}'}]}})
                 self.assertTrue(self.run_merge()[0])
-                expected = role.strip('"\'') or 'gpt'
+                expected = role.strip('"\'')
                 self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(integrate.load_json(self.target))}, {expected})
 
     def test_grouped_hook_format_is_diagnosed_without_partial_changes(self):

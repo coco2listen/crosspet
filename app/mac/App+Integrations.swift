@@ -16,7 +16,7 @@ extension App {
         ("workbuddy", "WorkBuddy", "按当前模型换角色"),
         ("zcode", "ZCode（智谱）", "按会话的模型换角色"),
         ("hermes", "Hermes Agent", "按当前模型换角色；新开的会话生效"),
-        ("cursor", "Cursor", "跟着工作状态动。默认演 GPT，命令末尾可以改成自己的角色"),
+        ("cursor", "Cursor", "按当前模型换角色；认不出的模型由当前角色来演"),
         ("qwen", "Qwen Code（阿里）", "按当前模型换角色；新开的会话生效"),
     ]
     var integrateScript: URL? {

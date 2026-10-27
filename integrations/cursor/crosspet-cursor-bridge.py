@@ -1,4 +1,4 @@
-"""Cursor observer hooks -> a fixed CrossPet mascot, with artwork optional."""
+"""Cursor observer hooks -> the CrossPet character for the model each conversation uses."""
 import contextlib
 import ctypes
 import hashlib
@@ -14,8 +14,9 @@ else:
     import fcntl
     import select
 
-# The mascot is an argument, same as crosspet-hook.py. Cursor does not pick one.
-CHARACTER = sys.argv[1] if len(sys.argv) > 1 else 'gpt'
+# 每条事件都带 Cursor 里选的模型（model / model_id）：按它换成对应的角色，和 crosspet-hook.py 的多模型宿主一样。
+# 认不出的模型（Cursor 自家的 Composer、Auto……）用接入时指定的角色（命令末尾的参数），没指定就由当前角色来演
+FALLBACK = sys.argv[1] if len(sys.argv) > 1 else None
 
 # Same folders as crosspet-hook.py and the shells: the macOS pet reads /tmp/crosspet.
 if os.name == 'nt':
@@ -131,6 +132,33 @@ def locked(name='.cursor-bridge.lock'):
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+def character_for_model(model):
+    """和 crosspet-hook.py 的 character_for_model 同一套规则（tests/cursor_bridge_test.py 对拍两边）"""
+    m = str(model).lower()
+    if 'glm' in m or 'zhipu' in m or 'chatglm' in m or 'z.ai' in m or 'zai-' in m:
+        return 'glm'
+    if 'qwen' in m or 'dashscope' in m or 'bailian' in m or 'tongyi' in m or m == 'coder-model':
+        return 'qwen'
+    if 'kimi' in m or 'moonshot' in m:
+        return 'kimi'
+    if 'grok' in m:
+        return 'grok'
+    if 'deepseek' in m:
+        return 'deepseek'
+    if 'claude' in m or 'anthropic' in m:
+        return 'claude'
+    if 'gemini' in m:
+        return 'gemini'
+    if m.startswith(('gpt', 'o1', 'o3', 'o4', 'codex', 'chatgpt')) or 'openai' in m:
+        return 'gpt'
+    return None
+
+
+def installed(cid):
+    d = ROOT / 'characters' / str(cid)
+    return (d / 'character.json').is_file() and any((d / ('idle.' + ext)).is_file() for ext in ('png', 'webp'))
+
+
 def tool_pose(name):
     name = str(name).lower()
     for pose, terms in [('reading', ('read', 'grep', 'glob', 'list', 'codebase')),
@@ -187,6 +215,10 @@ def handle(event):
     if not identity:
         return  # Never conflate unrelated unidentified conversations.
     sid = 'cursor_' + hashlib.sha256(str(identity).encode()).hexdigest()[:20]
+    model = str(event.get('model_id') or event.get('model') or '')
+    mapped = character_for_model(model) if model else None
+    if mapped and not installed(mapped):
+        mapped = None   # 对应的角色还没装立绘：当成认不出的模型
     generation = _generation(event.get('generation_id'))
     now = time.time()
     activity = {'pose': 'thinking', 'event': kind, 'tool': '', 'ts': now}
@@ -213,6 +245,9 @@ def handle(event):
         all_sessions = _load_dict(path)
         all_sessions = {k: v for k, v in all_sessions.items()
                         if isinstance(v, dict) and isinstance(v.get('state'), dict)}
+        before = {v.get('character') or FALLBACK or 'current' for v in all_sessions.values()}
+        # 这条事件没带模型（老版本 Cursor）：沿用这个会话上次的角色
+        character = mapped or (None if model else all_sessions.get(sid, {}).get('character')) or FALLBACK or 'current'
         sessions = {k: v for k, v in all_sessions.items() if now - v['state'].get('ts', 0) < 600}
         order_path = STATE / 'cursor-bridge-order.json'
         orders = _load_dict(order_path)
@@ -255,10 +290,11 @@ def handle(event):
         if kind == 'sessionEnd':
             sessions.pop(sid, None)
         else:
-            sessions[sid] = {'generation': generation, 'state': activity}
+            sessions[sid] = {'generation': generation, 'state': activity, 'character': character}
         sessions = dict(sorted(sessions.items(), key=lambda kv: kv[1]['state']['ts'])[-32:])
         active = [entry['state'] for entry in sessions.values()
-                  if entry['state']['pose'] not in RESTING
+                  if (entry.get('character') or FALLBACK or 'current') == character
+                  and entry['state']['pose'] not in RESTING
                   and now - entry['state']['ts'] < 180]
         if active:
             activity = max(active, key=lambda state: state['ts'])
@@ -269,30 +305,35 @@ def handle(event):
             pass
         atomic(order_path, orders)
         atomic(path, sessions)
-        write_cards(sessions, now)
-        atomic(STATE / 'cursor-host.json', {'character': CHARACTER, 'source': 'cursor', 'ts': now})
-        atomic(STATE / f'{CHARACTER}-state.json', activity)
+        for cid in sorted(before | {v.get('character') or FALLBACK or 'current' for v in sessions.values()} | {character}):
+            write_cards(cid, sessions, now)
+        # 切到 Cursor 窗口时按它最近用的模型换角色；认不出的写 null，桌宠不换人
+        atomic(STATE / 'cursor-host.json', {'character': None if character == 'current' else character,
+                                            'model': model, 'source': 'cursor', 'ts': now})
+        atomic(STATE / f'{character}-state.json', activity)
         atomic(STATE / 'cursor-bridge-status.json', {'installed': True, 'last_event': kind,
-               'artwork_ready': any((ROOT / 'characters' / CHARACTER / ('idle.' + ext)).is_file() for ext in ('png', 'webp')), 'ts': now})
+               'artwork_ready': character == 'current' or installed(character), 'ts': now})
 
 
-def write_cards(sessions, now):
+def write_cards(character, sessions, now):
     """<character>-sessions.json drives the pet's per-conversation cards. Other integrations can
     write the same file (crosspet-hook.py for the same character in another app), so only the
     cursor_ entries are replaced. A card shows the tool being used, like crosspet-hook.py."""
     # Use the same character-session lock as crosspet-hook.py, so its cards
     # cannot disappear between this bridge's read and atomic replacement.
-    with locked(f'.{CHARACTER}-sessions.lock'):
-        _write_cards_locked(sessions, now)
+    with locked(f'.{character}-sessions.lock'):
+        _write_cards_locked(character, sessions, now)
 
 
-def _write_cards_locked(sessions, now):
-    path = STATE / f'{CHARACTER}-sessions.json'
+def _write_cards_locked(character, sessions, now):
+    path = STATE / f'{character}-sessions.json'
     others = {k: v for k, v in _load_dict(path).items()
               if not k.startswith('cursor_') and isinstance(v, dict)
               and isinstance(v.get('ts'), (int, float)) and now - v['ts'] < 600}
     cards = {}
     for k, value in sessions.items():
+        if (value.get('character') or FALLBACK or 'current') != character:
+            continue   # 这个会话用的是别的模型，卡片在那个角色的文件里
         state = value['state']
         pose = state.get('after') or state['pose'] if state['pose'] == 'thinking' else state['pose']
         cards[k] = {'pose': pose, 'event': state['event'], 'ts': state['ts']}

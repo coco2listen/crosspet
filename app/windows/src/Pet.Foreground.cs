@@ -64,7 +64,7 @@ namespace CrossPet
             return string.IsNullOrWhiteSpace(host) ? null : HostCharacter(host);
         }
 
-        // 首次写路由也算变化：Cursor 前台刚开始默认 GPT，桥的第一条角色记录不能等切窗口才生效。
+        // 首次写路由也算变化：Cursor 前台时桥的第一条角色记录不能等切窗口才生效。
         bool HostRoutesChanged()
         {
             var changed = false;
@@ -89,7 +89,7 @@ namespace CrossPet
         /// 一个程序里能用好几家模型（比如 DeepSeek Harness）：它的接入插件把当前角色写在 &lt;角色&gt;-host.json，
         /// 切到这个程序时换成那个角色。一天内写的才算，角色不存在就还用对照表里的
         /// </summary>
-        static readonly Dictionary<string, string> HostDefaults = new Dictionary<string, string> { ["zcode"] = "glm", ["qwen"] = "qwen", ["cursor"] = "gpt" };
+        static readonly Dictionary<string, string> HostDefaults = new Dictionary<string, string> { ["zcode"] = "glm", ["qwen"] = "qwen" };
         string HostCharacter(string id)
         {
             var file = Path.Combine(Store.State, id + "-host.json");
@@ -102,7 +102,7 @@ namespace CrossPet
             catch { return id; }
             var host = Store.ReadJson(file);
             var c = host != null && host.TryGetValue("character", out var v) ? v as string : null;
-            return c != null && Characters().Any(x => x.id == c) ? c : id == "cursor" && HostDefaults.TryGetValue(id, out var fallback) && Characters().Any(x => x.id == fallback) ? fallback : id;
+            return c != null && Characters().Any(x => x.id == c) ? c : id;   // 认不出的模型（写的 null）：不换人
         }
     }
 }

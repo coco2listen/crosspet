@@ -165,7 +165,7 @@ class CursorIntegrationTests(unittest.TestCase):
         first = integrate.load_json(self.target)
         # 默认不带角色参数：认不出的模型由当前角色来演
         self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(first)}, {''})
-        self.assertEqual(len(self.ours(first)), 12)
+        self.assertEqual(len(self.ours(first)), 13)
         self.assertTrue(self.run_merge()[0])
         self.assertEqual(integrate.load_json(self.target), first)
         integrate.remove_cursor_hooks(self.target)
@@ -186,7 +186,7 @@ class CursorIntegrationTests(unittest.TestCase):
         self.assertEqual(first['hooks']['retiredMixed'], [other])
         self.assertIn(other, first['hooks']['stop'])
         self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(first)}, {'grok'})
-        self.assertEqual(len(self.ours(first)), 12)
+        self.assertEqual(len(self.ours(first)), 13)
         self.assertTrue((self.support / integrate.CURSOR_MARK).exists())
         self.assertTrue(self.run_merge()[0])
         self.assertEqual(integrate.load_json(self.target), first)
@@ -252,7 +252,7 @@ class CursorIntegrationTests(unittest.TestCase):
             self.assertIn('更新 cursor', result.stdout)
             after = integrate.load_json(self.target)
             self.assertEqual({integrate.cursor_character(entry) for entry in self.ours(after)}, {'grok'})
-            self.assertEqual(len(self.ours(after)), 12)
+            self.assertEqual(len(self.ours(after)), 13)
             self.assertIn(other, after['hooks']['stop'])
             self.assertTrue(after['userOption'])
             if first is not None:

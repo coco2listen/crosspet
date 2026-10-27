@@ -28,7 +28,7 @@ else:
 BIG_JOB_TOOLS = 8  # Same as crosspet-hook.py: a turn with this many tools ends 'proud'.
 # Poses that mean a conversation is not working right now.
 RESTING = ('idle', 'happy', 'proud', 'oops', 'surprised')
-OBSERVERS = ('sessionStart', 'sessionEnd', 'postToolUse', 'postToolUseFailure',
+OBSERVERS = ('sessionStart', 'sessionEnd', 'beforeSubmitPrompt', 'postToolUse', 'postToolUseFailure',
              'afterShellExecution', 'afterMCPExecution', 'afterFileEdit',
              'afterAgentThought', 'afterAgentResponse', 'subagentStop', 'preCompact', 'stop')
 
@@ -224,6 +224,9 @@ def handle(event):
     activity = {'pose': 'thinking', 'event': kind, 'tool': '', 'ts': now}
     if kind == 'sessionStart':
         activity.update(pose='idle', event='SessionStart')
+    elif kind == 'beforeSubmitPrompt':
+        # 你一按发送就到（其他事件都是做完才来）：没有这条的话，短对话她要等 Cursor 回答完才动
+        activity.update(pose='listening', event='UserPromptSubmit')
     elif kind == 'sessionEnd':
         activity.update(pose='idle', event='SessionEnd')
     elif kind == 'stop':
@@ -341,12 +344,18 @@ def _write_cards_locked(character, sessions, now):
 
 
 def main():
+    # beforeSubmitPrompt 能拦住消息：回复不合格式 Cursor 会当成「拦下」。所以它和读不懂的事件一律回「放行」，
+    # 其余观察事件照旧回 {}（它们没有输出字段）
+    reply = '{"continue": true}'
     try:
-        handle(read_event())
+        event = read_event()
+        if isinstance(event, dict) and event.get('hook_event_name') != 'beforeSubmitPrompt':
+            reply = '{}'
+        handle(event)
     except BaseException:
         # Observer failures must never expose input or interfere with the agent.
         pass
-    sys.stdout.write('{}\n')
+    sys.stdout.write(reply + '\n')
     return 0
 
 

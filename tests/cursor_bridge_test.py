@@ -34,8 +34,9 @@ class CursorBridgeTest(unittest.TestCase):
     def raw(self, text):
         result = subprocess.run([sys.executable, str(BRIDGE), "grok"], input=text, text=True,
                                 capture_output=True, env=self.env, timeout=10)
-        # 观察者钩子：永远退出码 0、只回 {}，不能影响 Cursor
-        self.assertEqual((result.returncode, result.stdout.strip(), result.stderr), (0, "{}", ""))
+        # 观察者钩子：永远退出码 0，不能影响 Cursor。观察事件回 {}；读不懂的输入回「放行」（可能是 beforeSubmitPrompt）
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn(result.stdout.strip(), ("{}", '{"continue": true}'))
         return self.read("grok-state.json")
 
     def read(self, name):
@@ -55,6 +56,32 @@ class CursorBridgeTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(BRIDGE), *args], input=json.dumps(event), text=True,
                                 capture_output=True, env=self.env, timeout=10)
         self.assertEqual((result.returncode, result.stdout.strip(), result.stderr), (0, "{}", ""))
+
+    # ---- 发消息那一刻（beforeSubmitPrompt）：她马上开始听，不用等 Cursor 回答完 ----
+    # 这个事件能拦住消息：回复格式不对 Cursor 会当成「拦下」，所以一定要回 {"continue": true}，读不懂事件时也一样
+    def submit(self, text):
+        result = subprocess.run([sys.executable, str(BRIDGE), "grok"], input=text, text=True,
+                                capture_output=True, env=self.env, timeout=10)
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        return json.loads(result.stdout)
+
+    def test_submit_prompt_starts_listening_and_always_continues(self):
+        reply = self.submit(json.dumps({"hook_event_name": "beforeSubmitPrompt", "conversation_id": "C1",
+                                        "generation_id": "G1", "prompt": "hi", "model": "grok-4.6"}))
+        self.assertEqual(reply, {"continue": True})
+        state = self.read("grok-state.json")
+        self.assertEqual((state["pose"], state["event"]), ("listening", "UserPromptSubmit"))
+
+    def test_submit_prompt_continues_even_when_input_is_broken(self):
+        for text in ("", "not json", '{"hook_event_name": "beforeSubmitPrompt"'):
+            with self.subTest(text=text):
+                self.assertEqual(self.submit(text), {"continue": True})
+
+    def test_new_turn_after_stop_listens_again(self):
+        self.submit(json.dumps({"hook_event_name": "beforeSubmitPrompt", "conversation_id": "C1", "generation_id": "G1"}))
+        self.send("stop", gen="G1", status="completed")
+        self.submit(json.dumps({"hook_event_name": "beforeSubmitPrompt", "conversation_id": "C1", "generation_id": "G2"}))
+        self.assertEqual(self.read("grok-state.json")["pose"], "listening")
 
     def test_model_rule_matches_hook(self):
         """桥里那份按模型选角色的规则和 crosspet-hook.py 的必须一样（两边各自是独立脚本，没法互相 import）"""

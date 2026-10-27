@@ -17,6 +17,14 @@
         "failClosed": false
       }
     ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 \"$HOME/Library/Application Support/CrossPet/crosspet-cursor-bridge.py\"",
+        "type": "command",
+        "timeout": 2,
+        "failClosed": false
+      }
+    ],
     "postToolUse": [
       {
         "command": "python3 \"$HOME/Library/Application Support/CrossPet/crosspet-cursor-bridge.py\"",

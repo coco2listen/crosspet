@@ -398,6 +398,8 @@ def character_for_model(model: str):
         return "qwen"
     if "kimi" in m or "moonshot" in m:
         return "kimi"
+    if "grok" in m:   # xAI 的 grok-4.7、OpenRouter 的 x-ai/grok-…
+        return "grok"
     if "deepseek" in m:
         return "deepseek"
     if "claude" in m or "anthropic" in m:
@@ -461,6 +463,8 @@ def character_for_url(url: str):
         return "glm"
     if "moonshot" in u or "kimi" in u:
         return "kimi"
+    if "x.ai" in u:   # api.x.ai
+        return "grok"
     return None
 
 

@@ -34,6 +34,7 @@
   - **Gemini**：生图时拿香蕉当画笔（Nano Banana）；闲着会反重力飘起来
   - **GLM**：笑眯眯的「心机涨价狐」，戳她会被抓到偷偷改价签；闲着会拉下眼罩假装自己是「神秘新模型」，或者抱着一摞售罄的会员卡得意；大活干完时掀开眼罩揭晓真身
   - **Qwen（千问）**：温柔大方的富家千金，拿扇子表达情绪；大活干完请你喝奶茶，额度快用完时掏出金卡「再买就是了～」，闲着会从手提包里掏小礼物分给大家。彩蛋：DeepSeek 把你交代的活偷偷外包给她，自己抱着枕头睡大觉。目前只在 Qwen Code 里能跟着干活（见下表）
+  - **Grok**：扛着 X 大斧、嘴最毒的哥特小恶魔女王，金发双马尾配蝙蝠蝴蝶结。谁说的话都要先「查证」——闲着会把手机怼到你面前「@grok is this true? 我查过了」，或者斜眼坏笑「老板说的我也得查」；大活干完咬一根小辣椒「这把够辣」，出错时把毛巾顶在头上「Don't panic」。彩蛋：DeepSeek 偷戴她的王冠冒充 Grok，手机还拿反了。别家程序里用 Grok 模型时换成她
 
 ## 支持的 AI
 
@@ -200,8 +201,9 @@ DeepSeek 和 GLM 是对手，会趁对方不在上门捣乱：用 GLM 时，Deep
 - **GPT 娘（白龙）**：社区通称「御姐白龙」，出自 B 站 **ZipZipPipe**。
 - **GLM 娘（黑狐狸女仆）**：形象出自 B 站 **ZipZipPipe**；「心机涨价狐」的性格和专属动作是 CrossPet 在此基础上的二创，取自社区对智谱的印象。
 - **千问娘（国风千金）**：形象出自 B 站 **ZipZipPipe**；「温柔大方的千金」的性格和专属动作（请喝奶茶、分礼盒、掏金卡）是 CrossPet 在此基础上的二创。
+- **Grok 娘（哥特小恶魔女王）**：形象出自 B 站 **ZipZipPipe**；「爱查证、爱抬杠的小恶魔」的性格和专属动作（查证、辣味、Don't panic）是 CrossPet 在此基础上的二创。
 - **Gemini 娘**、**Claude 娘**：参考社区流行的 AI 娘设定（如 [ai-school-op](https://github.com/lshhhhhhh/ai-school-op)、[openpet-ai-girls](https://github.com/AwesomeHou/openpet-ai-girls)）。
-- 「Claude」「GPT」「ChatGPT」「Codex」「DeepSeek」「Gemini」「Antigravity」「GLM」「ZCode」「WorkBuddy」「Hermes」「Qwen」是各自公司的商标，本项目仅用于指代对应产品。
+- 「Claude」「GPT」「ChatGPT」「Codex」「DeepSeek」「Gemini」「Antigravity」「GLM」「ZCode」「WorkBuddy」「Hermes」「Qwen」「Grok」「xAI」是各自公司的商标，本项目仅用于指代对应产品。
 
 - **穿 Claude 卫衣的大肥鱼**、**睡衣 / 冬装的大肥鱼**：CrossPet 在「大肥鱼」基础上的二创皮肤，同样按 CC BY-NC-SA 4.0 授权。
 - **降智龙崽**：CrossPet 在「御姐白龙」基础上的二创皮肤，同样按 CC BY-NC-SA 4.0 授权。

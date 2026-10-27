@@ -118,6 +118,14 @@ class HookModelHostTests(unittest.TestCase):
         self.fire('qwen', {'hook_event_name': 'SessionStart', 'session_id': 's1', 'model': 'coder-model', 'source': 'startup'})
         self.assertEqual(self.read('qwen-host.json')['character'], 'qwen')
 
+    # 别的宿主里用 Grok 模型（OpenRouter 的 x-ai/grok-…、xAI 自家的 grok-…）时换成 Grok
+    def test_grok_model_is_grok(self):
+        self.add_character('qwen')
+        self.add_character('grok')
+        for sid, model in (('s1', 'grok-4.7'), ('s2', 'x-ai/grok-code-fast-2')):
+            self.fire('qwen', {'hook_event_name': 'SessionStart', 'session_id': sid, 'model': model, 'source': 'startup'})
+            self.assertEqual(self.read('qwen-host.json')['character'], 'grok', model)
+
     def test_session_start_writes_heartbeat(self):
         self.add_character('qwen')
         self.fire('qwen', {'hook_event_name': 'SessionStart', 'session_id': 's1', 'model': 'qwen3.8-max', 'source': 'startup'})

@@ -31,6 +31,11 @@ test('别家的模型照旧映射，不受千问那条影响', async () => {
   assert.equal(await hostCharacterFor('anthropic', 'claude-sonnet-4'), 'claude')
   assert.equal(await hostCharacterFor('', 'gpt-5'), 'gpt')
 })
+test('Grok：模型名或服务商名（xai / x-ai）认出来换成 grok', async () => {
+  for (const [provider, model] of [['', 'grok-4.7'], ['openrouter', 'x-ai/grok-code-fast-2'], ['xai', 'grok-4-fast']]) {
+    assert.equal(await hostCharacterFor(provider, model), 'grok', `${provider}/${model}`)
+  }
+})
 test('认不出的还是由 DeepSeek 自己来演', async () => {
   assert.equal(await hostCharacterFor('some-gateway', 'mystery-model-1'), 'deepseek')
 })

@@ -28,7 +28,8 @@ export function clientOf(entry: string | undefined) {
   return { client: 'unknown', clientReason: 'entrypoint:unrecognized' }
 }
 async function clientMetadata($: EngineInterface) {
-  return clientOf(await $.env.get('CLAUDE_CODE_ENTRYPOINT'))
+  try { return clientOf(await $.env.get('CLAUDE_CODE_ENTRYPOINT')) }
+  catch { return clientOf(undefined) } // 来源读取失败不能中断原有状态写入。
 }
 
 // 走别家的兼容接口（DeepSeek / 智谱……）时换成对应的角色演，认不出的还是 Claude。

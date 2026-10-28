@@ -1,0 +1,20 @@
+{
+  "scope": { "family": "claude", "client": "tui", "staleAfter": 180 },
+  "now": 1200,
+  "snapshots": [
+    { "schema": 1, "family": "claude", "source": "claude-code", "client": "tui", "sessionId": "terminal-1", "model": "claude-test", "status": "Thinking", "pose": "thinking", "event": "PreInvocation", "ts": 1000, "observedAt": 1000, "sequence": 1, "producerId": "producer-1", "turnId": "turn-1", "pid": 234 },
+    { "schema": 1, "family": "claude", "source": "claude-code", "client": "desktop", "sessionId": "terminal-1", "model": "claude-test", "status": "Tool Running", "pose": "running", "event": "PreToolUse", "ts": 1199, "observedAt": 1199, "sequence": 1, "producerId": "producer-2", "turnId": "turn-1", "pid": 235 },
+    { "schema": 1, "family": "claude", "source": "claude-code", "client": "unknown", "sessionId": "unknown-1", "model": "claude-test", "status": "Thinking", "pose": "thinking", "event": "PreInvocation", "ts": 1199, "observedAt": 1199 }
+  ],
+  "expected": { "status": "Unknown", "pose": "sleeping", "event": "StateStale", "ts": 1000, "stale": true, "count": 1,
+    "payload": { "status": "Unknown", "pose": "sleeping", "event": "StateStale", "ts": 1000, "stale": true, "source": "claude-code", "client": "tui", "sessionId": "terminal-1", "model": "claude-test", "turnId": "turn-1", "recordedStatus": "Thinking", "recordedEvent": "PreInvocation", "confidence": "stale", "unattributed": 1 }
+  },
+  "processes": [
+    { "pid": 1, "parent": 0, "executable": "/sbin/launchd", "started": 10 },
+    { "pid": 2, "parent": 1, "executable": "/bin/zsh", "started": 100 },
+    { "pid": 12, "parent": 2, "executable": "/opt/homebrew/bin/claude", "started": 101 },
+    { "pid": 13, "parent": 1, "executable": "/Applications/Claude.app/Contents/MacOS/Claude", "started": 102 },
+    { "pid": 14, "parent": 13, "executable": "/opt/homebrew/bin/claude", "started": 103 }
+  ],
+  "expectedHosts": { "claude-tui": 101, "claude-desktop": 102 }
+}

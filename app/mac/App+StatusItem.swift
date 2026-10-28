@@ -27,19 +27,21 @@ extension App {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
             // 临时挂上菜单再「点一下」：菜单从图标正下方弹出，关掉后摘下，免得左键也变成弹菜单
-            statusItem?.menu = buildMenu()
+            statusItem?.menu = menuPet.buildMenu()
             sender.performClick(nil)
             statusItem?.menu = nil
         } else {
-            bringToFront()
+            activePets.forEach { $0.bringToFront() }
         }
     }
 
     /// 叫到最前面：在当前屏幕看不见（被拖出屏幕、换了显示器）就先回到右下角
     @objc func bringToFront() {
+        if family != nil { windowDefaults.set(true, forKey: "enabled"); owner.applyPetMode() }
+        guard let panel else { return }
         let visible = NSScreen.screens.contains { $0.visibleFrame.intersects(panel.frame.insetBy(dx: 40, dy: 40)) }
         if !visible { resetPosition() }
-        userHidden = false
+        setUserHidden(false)
         fullscreenOverride = true; hiddenForFullscreen = false   // 你主动叫她：全屏时也出来（切换空间 / 前台程序后再按规则收起来）
         panel.orderFrontRegardless()
         js("handleClick('pat')")
@@ -60,13 +62,18 @@ extension App {
 
     /// 换衣服（皮肤）：记下来，重新载入立绘；正在显示的就是她的话马上换上
     func wear(_ id: String, _ skin: String) {
-        var skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
-        guard (skins[id] ?? "") != skin else { return }
-        if skin.isEmpty { skins.removeValue(forKey: id) } else { skins[id] = skin }
-        defaults.set(skins, forKey: "skins")
-        loadCharacters()
-        js("refreshLook(\(quote(id)))")
-        pushSettings()   // 设置页开着（角色页的衣服卡）时高亮跟着变：按时段自动换衣服也走这里
+        if independentOutfit {
+            guard id == family, selectedSkins[id] != skin else { return }
+            windowDefaults.set(skin, forKey: "outfitV1")
+            if ready { loadCharacters(); js("refreshLook(\(quote(id)))") }
+            pushSettings()
+        } else {
+            var skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+            guard (skins[id] ?? "") != skin else { return }
+            if skin.isEmpty { skins.removeValue(forKey: id) } else { skins[id] = skin }
+            defaults.set(skins, forKey: "skins")
+            owner.applySharedSettings(key: "skins")
+        }
     }
 
     @objc func rename() {
@@ -85,28 +92,21 @@ extension App {
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         if value.isEmpty { names.removeValue(forKey: id) } else { names[id] = value }
         defaults.set(names, forKey: "names")
-        loadCharacters()
-        js("setName(\(quote(id)), \(quote(displayNames[id] ?? id)))")
+        owner.applySharedSettings(key: "names")
     }
 
     @objc func toggleAntigravityQuota() {
         let on = !defaults.bool(forKey: "agyQuota")
         defaults.set(on, forKey: "agyQuota")
-        if on { refreshAntigravityQuota() } else { js("setQuota('gemini', null)") }
+        owner.applySharedSettings(key: "agyQuota")
     }
 
     /// 背景光晕：auto（跟着系统深浅色，深色模式下关）/ on / off
     var auraMode: String { defaults.string(forKey: "auraMode") ?? "auto" }
-    @objc func setAura(_ sender: NSMenuItem) {
-        guard let mode = sender.representedObject as? String else { return }
-        defaults.set(mode, forKey: "auraMode")
-        js("setAuraMode(\(quote(mode)))")
-    }
-
     @objc func toggleGPTQuota() {
         let on = !defaults.bool(forKey: "gptQuota")
         defaults.set(on, forKey: "gptQuota")
-        if on { refreshCodexQuota(.now) } else { js("setCodexQuota(null)") }
+        owner.applySharedSettings(key: "gptQuota")
     }
 
     @objc func toggleLogin() {
@@ -122,11 +122,12 @@ extension App {
     }
 
     @objc func openCharacters() { NSWorkspace.shared.open(charactersDir) }
-    @objc func reload() { web.reload() }
+    @objc func reload() { web?.reload() }
     @objc func resetPosition() {
+        guard let panel else { return }
         undock()
         guard let screen = NSScreen.main?.visibleFrame else { return }
         panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 40, y: screen.minY + 100))
-        defaults.removeObject(forKey: "origin")
+        windowDefaults.removeObject(forKey: "origin")
     }
 }

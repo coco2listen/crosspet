@@ -41,6 +41,7 @@ extension App {
     }
 
     func checkForUpdate(manual: Bool) {
+        if coordinator != nil { owner.checkForUpdate(manual: manual); return }
         // 装的是测试版：也收下一个测试版。releases/latest 不含测试版，改看发布页的订阅源（releases.atom，不限流），
         // 在比现在新的版本里挑最新、且 macOS 安装包真的在的（测试版发布页删了、标签还留着的不算）；没有就照常查正式版
         if currentVersion.contains("-"), let feed = URL(string: "https://github.com/\(repoSlug)/releases.atom") {
@@ -96,7 +97,8 @@ extension App {
                 if !tag.isEmpty, let page = page, self.isNewer(tag, than: self.currentVersion) {
                     let isFresh = self.latestRelease?.tag != tag
                     self.latestRelease = (tag, page)
-                    if isFresh || manual { self.js("notifyUpdate(\(self.quote(tag)))") }
+                    for pet in self.familyPets { pet.latestRelease = (tag, page) }
+                    if isFresh || manual { self.activePets.forEach { $0.js("notifyUpdate(\($0.quote(tag)))") } }
                     self.pushSettings()
                 } else if manual {
                     let alert = NSAlert()
@@ -172,7 +174,6 @@ extension App {
     }
 
     @objc func openRelease() { if let url = latestRelease?.url { NSWorkspace.shared.open(url) } }
-    @objc func manualCheck() { checkForUpdate(manual: true) }
 
     /// 把 App 包里的 web/、钩子脚本和内置角色同步到运行目录。用户自己加的角色目录不动。
     func syncBundledResources() {
@@ -186,6 +187,19 @@ extension App {
         }
         if fm.fileExists(atPath: res.appendingPathComponent("web").path) { replace("web", in: root, from: res) }
         if fm.fileExists(atPath: res.appendingPathComponent("crosspet-hook.py").path) { replace("crosspet-hook.py", in: root, from: res) }
+        // Preserve the previous integration before replacing installed code. A failed copy rolls back.
+        func updateIntegration(_ destination: URL, from source: URL) {
+            guard fm.fileExists(atPath: destination.path), fm.fileExists(atPath: source.path),
+                  !fm.contentsEqual(atPath: destination.path, andPath: source.path) else { return }
+            let backups = root.appendingPathComponent("integration-backups", isDirectory: true)
+            let backup = backups.appendingPathComponent(destination.lastPathComponent + "-" + UUID().uuidString)
+            do {
+                try fm.createDirectory(at: backups, withIntermediateDirectories: true)
+                try fm.moveItem(at: destination, to: backup)
+                do { try fm.copyItem(at: source, to: destination) }
+                catch { try? fm.removeItem(at: destination); try fm.moveItem(at: backup, to: destination) }
+            } catch { NSLog("CrossPet: integration update deferred; previous installation preserved") }
+        }
         // 已经接入过的才更新，没接入的不碰
         let cursorBridge = "crosspet-cursor-bridge.py"
         let cursorSrc = res.appendingPathComponent("integrations/cursor")
@@ -195,13 +209,13 @@ extension App {
         }
         let mods = fm.homeDirectoryForCurrentUser.appendingPathComponent(".claude/mods/crosspet")
         let modSrc = res.appendingPathComponent("integrations/claude-code/mod")
-        if fm.fileExists(atPath: mods.path), fm.fileExists(atPath: modSrc.path) {
-            try? fm.removeItem(at: mods); try? fm.copyItem(at: modSrc, to: mods)
+        if !isolatedRun, fm.fileExists(atPath: mods.path), fm.fileExists(atPath: modSrc.path) {
+            updateIntegration(mods, from: modSrc)
         }
         let dsh = root.appendingPathComponent("dsh-plugin-crosspet")
         let dshSrc = res.appendingPathComponent("integrations/deepseek/dsh-plugin-crosspet")
         if fm.fileExists(atPath: dsh.path), fm.fileExists(atPath: dshSrc.path) {
-            try? fm.removeItem(at: dsh); try? fm.copyItem(at: dshSrc, to: dsh)
+            updateIntegration(dsh, from: dshSrc)
         }
         let bundled = res.appendingPathComponent("characters")
         for dir in (try? fm.contentsOfDirectory(atPath: bundled.path)) ?? [] {
@@ -222,25 +236,32 @@ extension App {
             devJS("setAppInfo(\(data)); boot(\(manifestJSON))")
             return
         }
+        guard webView === web else { return }
         ready = true
+        if let family { js("setFamilyMode(\(quote(family)), \(client.map(quote) ?? "null"))") }
         loadCharacters()
         // 恢复上次的角色（和 Windows 一致：先恢复，再让下面的「跟随前台」按前台程序覆盖）。
         // 没存过 / 那个角色已经不在了：保持 init() 里选的第一个。quiet：不演登场招呼
-        if let saved = defaults.string(forKey: "character"), characterIds.contains(saved) {
+        if let saved = family ?? defaults.string(forKey: "character"), characterIds.contains(saved) {
             currentId = saved
             js("setCharacter(\(quote(saved)), true)")
         }
-        if let side = defaults.string(forKey: "dock"), edgeDockEnabled {   // 上次是贴着边的
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.setDock(side) }
+        if let side = windowDefaults.string(forKey: "dock"), edgeDockEnabled {   // 上次是贴着边的
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak webView] in
+                guard let self, let webView, self.web === webView, self.windowDefaults.string(forKey: "dock") == side else { return }
+                self.setDock(side)
+            }
         }
-        js("setAuraMode(\(quote(auraMode))); setShowName(\(showName)); setEggsEnabled(\(eggsEnabled)); setPowerSave(\(powerSave)); setQuotaAggregate(\(quotaAggregate)); setCodexResets(\(codexResets)); setPeakStyle(\(quote(peakStyle))); setQuotaStyle(\(quote(quotaStyle))); setPeakSkins(\(peakSkinsJSON))")
+        js("setAuraMode(\(quote(auraMode))); setShowName(\(showName)); setEggsEnabled(\(eggsEnabled)); setPowerSave(\(powerSave)); setQuotaAggregate(\(quotaAggregate)); setCodexResets(\(codexResets), \(familiesMode)); setPeakStyle(\(quote(peakStyle))); setQuotaStyle(\(quote(quotaStyle))); setPeakSkins(\(peakSkinsJSON))")
         applySizes(anchor: .corner)   // 解锁过文字大小的：按画布重设窗口，左下角不动（锁着的尺寸不变）
         updatePageHidden()
         stamps = [:]
+        familyPayload = ""; familySessionPayload = ""; clientQuotaPayloads = [:]
         pollStates()
+        owner.updateSharedResets()
         refreshCodexQuota(.now)
         refreshAntigravityQuota()
-        refreshPlugins(tellPet: true)   // 插件旧了：等她闲下来提醒一句
+        if !isolatedRun { refreshPlugins(tellPet: true) } // 插件旧了：等她闲下来提醒一句
         if followApps, let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
            let id = appToCharacter[front] ?? hostApp(front), characterIds.contains(hostCharacter(id)) {
             switchTo(hostCharacter(id), why: "startup", via: front)

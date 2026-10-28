@@ -77,7 +77,7 @@ extension App {
                                      "install": installId, "character": currentId ?? "", "skin": skins[currentId ?? ""] ?? "",
                                      "uptimeMin": Int(Date().timeIntervalSince(launchedAt) / 60)]
         let characters: [[String: String]] = characterIds.map { ["id": $0, "name": displayNames[$0] ?? $0] }
-        var facts: [String: Any] = ["header": header, "integrations": integrated ?? [], "characters": characters, "quotas": quotas,
+        var facts: [String: Any] = ["header": header, "integrations": Shared.integrated ?? [], "characters": characters, "quotas": quotas,
                                     "sections": sections.mapValues { Self.redact($0) }]
         if let key { facts["key"] = key }   // 收集的结果带回 collect 时的 key，页面据此丢掉上一类迟到的结果
         return facts
@@ -203,7 +203,7 @@ extension App {
             if i > 0 {
                 where_ = f.minX >= main.frame.maxX - 1 ? "右侧" : f.maxX <= main.frame.minX + 1 ? "左侧" : f.minY >= main.frame.maxY - 1 ? "上方" : f.maxY <= main.frame.minY + 1 ? "下方" : "重叠"
             }
-            let here = panel.screen == s ? "（桌宠在这）" : ""
+            let here = panel?.screen == s ? "（桌宠在这）" : ""
             return "\(Int(f.width))×\(Int(f.height))@\(Int(s.backingScaleFactor))x \(where_)\(here)"
         }
         var flags = ["层级 \(layerMode)", hideInFullscreen ? "全屏隐藏" : "全屏不隐藏"]
@@ -245,7 +245,7 @@ extension App {
                 let reply = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
                 let code = (reply?["code"] as? NSNumber)?.intValue ?? -1
                 if code == 0 {
-                    DispatchQueue.main.async { defaults.set(recent + [now], forKey: "feedbackTimes") }
+                    DispatchQueue.main.async { self.defaults.set(recent + [now], forKey: "feedbackTimes") }
                     done(true, "")
                 } else if err != nil { done(false, "连不上网络，稍后再试试") }
                 else if code == 11232 { done(false, "反馈的人有点多，过一会儿再发") }
@@ -257,10 +257,10 @@ extension App {
         default:   // get：反馈窗口刚打开，先给开头和第二步的选项
             pushFacts([:])
             diagText = ""   // 每次打开反馈都重新诊断一次（要用时再跑）
-            if integrated == nil, integrateScript != nil {
+            if Shared.integrated == nil, integrateScript != nil {
                 runIntegrate(["installed"]) { [weak self] out, _ in
                     let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
-                    self?.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
+                    Shared.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
                     self?.pushFacts([:])
                 }
             }

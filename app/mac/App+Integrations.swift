@@ -65,17 +65,32 @@ extension App {
     static let seenKeys = ["claude-hooks": "claude", "claude-mod": "claude-mod", "codex": "gpt", "deepseek": "deepseek", "gemini": "gemini",
                            "antigravity": "antigravity", "workbuddy": "workbuddy", "zcode": "zcode", "hermes": "hermes", "qwen": "qwen", "cursor": "cursor", "grok": "grok"]
     var lastSeen: [String: Double] {
-        get { (defaults.dictionary(forKey: "seen") as? [String: Double]) ?? [:] }
-        set { defaults.set(newValue, forKey: "seen") }
+        get { (appPreferences.dictionary(forKey: "seen") as? [String: Double]) ?? [:] }
+        set { appPreferences.set(newValue, forKey: "seen") }
+    }
+    /// 升级前每只宠各存一份 seen：取各域里最新的合并到共享处一次，旧键原样保留（可回退）
+    func migrateSeen() {
+        var merged = lastSeen
+        let suites = ["claude", "gpt", "deepseek"].map { "\(preferenceDomain).pet.\($0)" } + Self.petIds.map { "\(preferenceDomain).pet.\($0)" }
+        for suite in suites {
+            for (key, ts) in (UserDefaults(suiteName: suite)?.dictionary(forKey: "seen") as? [String: Double]) ?? [:] where ts > (merged[key] ?? 0) { merged[key] = ts }
+        }
+        if merged != lastSeen { lastSeen = merged }
+    }
+    /// Older mods JSON-encoded the timestamp as a string; accept both wire formats.
+    static func heartbeatTimestamp(_ text: String) -> Double? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"")))
+        guard let ts = Double(value), ts.isFinite, ts > 0 else { return nil }
+        return ts
     }
     func refreshSeen() {
         var seen = lastSeen, changed = false
         for key in Set(Self.seenKeys.values) {
             guard let text = try? String(contentsOf: stateDir.appendingPathComponent("seen-\(key)"), encoding: .utf8),
-                  let ts = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)), ts > (seen[key] ?? 0) else { continue }
+                  let ts = Self.heartbeatTimestamp(text), ts > (seen[key] ?? 0) else { continue }
             seen[key] = ts; changed = true
         }
-        if changed { lastSeen = seen; if settingsWeb != nil { pushSettings() } }
+        if changed { lastSeen = seen; pushSettings() }
     }
     static func agoText(_ ts: Double?) -> String {
         guard let ts else { return "从没收到" }
@@ -85,35 +100,36 @@ extension App {
 
     func watchClaudeConfig() {
         refreshSeen()
-        guard ready, let stamp = (try? FileManager.default.attributesOfItem(atPath: claudeSettingsURL.path))?[.modificationDate] as? Date,
-              stamp != claudeConfigStamp else { return }
-        claudeConfigStamp = stamp
-        healPending?.cancel()
+        guard !isolatedRun, allPets.contains(where: { $0.ready }), let stamp = (try? FileManager.default.attributesOfItem(atPath: claudeSettingsURL.path))?[.modificationDate] as? Date,
+              stamp != Shared.configStamp else { return }
+        Shared.configStamp = stamp
+        Shared.healPending?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.healIntegrations() }
-        healPending = work
+        Shared.healPending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: work)
     }
     func healIntegrations() {
-        healTimes = healTimes.filter { Date().timeIntervalSince($0) < 3600 }
-        guard healTimes.count < 6, pythonReady, integrateScript != nil else { return }
+        Shared.healTimes = Shared.healTimes.filter { Date().timeIntervalSince($0) < 3600 }
+        guard Shared.healTimes.count < 6, pythonReady, integrateScript != nil else { return }
         runIntegrate(["heal"]) { [weak self] out, code in
             guard let self, code == 0 else { return }
             let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
             let healed = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
             guard !healed.isEmpty else { return }
-            self.healTimes.append(Date())
+            Shared.healTimes.append(Date())
             appLog("接回被冲掉的接入 \(healed)")
-            self.js("configHealed()")
+            self.activePets.forEach { $0.js("configHealed()") }
             self.refreshIntegrated()
         }
     }
 
-    func refreshIntegrated() {
-        runIntegrate(["installed"]) { [weak self] out, code in
+    func refreshIntegrated(then: (() -> Void)? = nil) {
+        runIntegrate(["installed"]) { [weak self] out, _ in
             guard let self else { return }
             let last = out.split(separator: "\n").last.map(String.init) ?? "[]"
-            self.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
+            Shared.integrated = (try? JSONSerialization.jsonObject(with: Data(last.utf8))) as? [String] ?? []
             self.pushSettings()
+            then?()
         }
         refreshPlugins()
     }
@@ -125,8 +141,8 @@ extension App {
             guard let self, code == 0, let last = out.split(separator: "\n").last.map(String.init),
                   (try? JSONSerialization.jsonObject(with: Data(last.utf8))) is [Any] else { return }
             DispatchQueue.main.async {
-                self.pluginStatus = last
-                if tellPet { self.js("setPluginUpdates(\(last))") }
+                Shared.pluginStatus = last
+                if tellPet { self.activePets.forEach { $0.js("setPluginUpdates(\(last))") } }
                 self.pushSettings()
             }
         }
@@ -148,17 +164,19 @@ extension App {
         }
     }
 
-    func pushSettings() {
+    /// 所有已打开的设置页一起刷新：接入状态、心跳是全局的，哪只宠的设置页都要看到同一份
+    func pushSettings() { allControllers.forEach { $0.pushOwnSettings() } }
+    func pushOwnSettings() {
         guard settingsWeb != nil else { return }
-        // 当前角色以桌宠页面里正在演的为准（启动时外壳会先从 UserDefaults 恢复上次的角色，见 didFinish）
-        web.evaluateJavaScript("charId") { [weak self] r, _ in
-            guard let self, let v = self.settingsWeb else { return }
-            // 只在还不知道当前角色时（刚启动、没存过上次的角色）问页面；换角色有 0.33 秒过渡，过渡中页面里还是旧角色
-            if self.currentId == nil, let id = r as? String, self.characterIds.contains(id) { self.currentId = id }
+        let push: (Any?) -> Void = { [weak self] result in
+            guard let self, let target = self.settingsWeb else { return }
+            if self.currentId == nil, let id = result as? String, self.characterIds.contains(id) { self.currentId = id }
             guard let data = try? JSONSerialization.data(withJSONObject: self.settingsState()),
                   let text = String(data: data, encoding: .utf8) else { return }
-            v.evaluateJavaScript("setState(\(text))", completionHandler: nil)
+            target.evaluateJavaScript("setState(\(text))", completionHandler: nil)
         }
+        guard let web else { push(nil); return }
+        web.evaluateJavaScript("charId") { result, _ in push(result) }
     }
 
     func handleSettings(_ body: Any) {
@@ -168,8 +186,13 @@ extension App {
             guard let key = msg["key"] as? String else { return }
             let value = msg["value"]
             switch key {
+            case "multiPets":
+                appPreferences.set(value as? Bool == true ? "clients" : "single", forKey: "petMode")
+                owner.applyPetMode(); owner.saveAppearanceConfiguration()
+            case "petEnabled":
+                if let on = value as? Bool { windowDefaults.set(on, forKey: "enabled"); owner.applyPetMode() }
             case "size":
-                if let n = value as? Double { let v = min(1.6, max(0.6, (n * 100).rounded() / 100)); defaults.set(v, forKey: "size"); applySizes(animateTo: CGFloat(v)) }
+                if let n = value as? Double { let v = min(1.6, max(0.6, (n * 100).rounded() / 100)); windowDefaults.set(v, forKey: "size"); applySizes(animateTo: CGFloat(v)) }
             case "textSize":   // 单独调文字：同时记为解锁
                 if let n = value as? Double {
                     defaults.set(min(1.6, max(0.6, (n * 100).rounded() / 100)), forKey: "textSize")
@@ -191,11 +214,11 @@ extension App {
             case "eggs":
                 let on = value as? Bool ?? true; defaults.set(on, forKey: "eggs"); js("setEggsEnabled(\(on))")
             case "gptQuota":
-                if (value as? Bool ?? false) != defaults.bool(forKey: "gptQuota") { toggleGPTQuota() }
+                defaults.set(value as? Bool ?? false, forKey: "gptQuota")
             case "agyQuota":
-                if (value as? Bool ?? false) != defaults.bool(forKey: "agyQuota") { toggleAntigravityQuota() }
+                defaults.set(value as? Bool ?? false, forKey: "agyQuota")
             case "hideHotkey":
-                if let v = value as? String { defaults.set(v, forKey: "hideHotkey"); registerHotKey() }
+                if let v = value as? String { owner.defaults.set(v, forKey: "hideHotkey"); owner.registerHotKey() }
             case "powerSave":
                 let on = value as? Bool ?? false
                 defaults.set(on, forKey: "powerSave"); js("setPowerSave(\(on))")
@@ -206,7 +229,7 @@ extension App {
                 if let v = value as? String { defaults.set(v, forKey: "whatsNewSeen") }
             case "codexResets":
                 let on = value as? Bool ?? false
-                defaults.set(on, forKey: "codexResets"); js("setCodexResets(\(on))")
+                defaults.set(on, forKey: "codexResets")
             case "peakSkins":
                 defaults.set(Self.cleanPeakSkins(value), forKey: "peakSkins"); js("setPeakSkins(\(peakSkinsJSON))")
             case "quotaStyle":
@@ -216,27 +239,35 @@ extension App {
             case "dsQuota":
                 let on = value as? Bool ?? true
                 defaults.set(on, forKey: "dsQuota")
-                stamps["deepseek-quota"] = nil   // 重新打开时马上读一次
+                stamps["deepseek-quota"] = nil
+                stamps[stateDir.appendingPathComponent("deepseek-quota.json").path] = nil   // 重新打开时马上读一次
                 if !on { js("setQuota('deepseek', null)") }
             case "edgeDock":
                 let on = value as? Bool ?? true
                 defaults.set(on, forKey: "edgeDock")
                 if !on { undock() }
+            case "appearanceMode":
+                if let mode = value as? String, AppearancePolicy.modes.contains(mode) {
+                    windowDefaults.set(mode, forKey: "appearanceMode"); owner.saveAppearanceConfiguration()
+                }
+            case "appearanceEnabled":
+                appPreferences.set(value as? Bool ?? true, forKey: "appearanceEnabled"); owner.saveAppearanceConfiguration()
             case "aiAutostart":
                 setAIAutostart(value as? Bool ?? true)
             case "login":
                 if (value as? Bool ?? false) != (SMAppService.mainApp.status == .enabled) { toggleLogin() }
             case "character":
-                if let id = value as? String, characterIds.contains(id) { switchTo(id, why: "manual", via: "settings") }
+                if family == nil, let id = value as? String, characterIds.contains(id) { switchTo(id, why: "manual", via: "settings") }
             default: break
             }
+            if !["size", "appearanceMode", "petEnabled", "multiPets"].contains(key) { owner.applySharedSettings(key: key) }
             pushSettings()
         case "integrate":
             if let target = msg["target"] as? String, let action = msg["action"] as? String { integrate(action, target) }
         case "skin":   // 换衣服：记下来，重新载入立绘；正在显示的就是她的话马上换上
             guard let id = msg["id"] as? String, characterIds.contains(id), let skin = msg["skin"] as? String else { return }
             wear(id, skin)
-            switchTo(id, why: "skin", via: skin)
+            if family == nil { switchTo(id, why: "skin", via: skin) }
             pushSettings()
         case "rename":
             guard let id = msg["id"] as? String, characterIds.contains(id) else { return }
@@ -244,8 +275,7 @@ extension App {
             let value = (msg["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             if value.isEmpty { names.removeValue(forKey: id) } else { names[id] = value }
             defaults.set(names, forKey: "names")
-            loadCharacters()
-            js("setName(\(quote(id)), \(quote(displayNames[id] ?? id)))")
+            owner.applySharedSettings(key: "names")
             pushSettings()
         case "action":
             switch msg["name"] as? String {
@@ -261,7 +291,7 @@ extension App {
             }
             pushSettings()
         default:   // get：设置窗口刚打开
-            if integrated == nil { refreshIntegrated() }
+            if Shared.integrated == nil { refreshIntegrated() }
             pushSettings()
         }
     }

@@ -28,6 +28,7 @@ extension App {
     }
 
     func applyLayer() {
+        guard let panel, let web else { return }
         // 每次轮询（0.3 秒）都看：程序一进全屏，窗口列表马上就是全屏后的大小，但「切换空间」的通知要等动画放完才来，
         // 只靠它和每秒一次的检查，她会在全屏动画上露一秒多（闪一下）
         if userHidden { return }   // 你用快捷键藏起来了：什么都别把她翻出来
@@ -44,7 +45,8 @@ extension App {
         }
         web.evaluateJavaScript("sink()") { [weak self] _, _ in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                guard let self, !self.userHidden, self.layerMode == "always" || (self.layerMode == "ai" && self.aiActive) else { self?.js("surface()"); return }
+                guard let self, self.panel === panel, self.web === web else { return }
+                guard !self.userHidden, self.layerMode == "always" || (self.layerMode == "ai" && self.aiActive) else { self.js("surface()"); return }
                 self.panel.level = .floating
                 self.panel.orderFrontRegardless()
                 self.js("surface()")

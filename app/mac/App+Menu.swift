@@ -12,6 +12,7 @@ extension App {
 
     func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        if familiesMode { addFamilyMenu(to: menu) }
         if let r = latestRelease {
             if canSelfUpdate {
                 add(menu, updating ? "⬆️ 正在更新到 \(r.tag)…" : "⬆️ 更新到 \(r.tag)", #selector(selfUpdate))

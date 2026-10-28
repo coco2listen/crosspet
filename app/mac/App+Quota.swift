@@ -10,7 +10,10 @@ extension App {
     /// 打开额度显示 / 页面就绪：马上问；Codex 回完一轮：隔 20 秒以上才问；定时（每分钟）：见 codexTickDue。
     /// 藏着、屏幕休眠时定时的不查（和 Windows 版 Pet.Quota.cs 一致）
     func refreshCodexQuota(_ why: CodexWhy) {
-        guard ready, defaults.bool(forKey: "gptQuota"), !codexInFlight else { return }
+        if owner !== self { owner.refreshCodexQuota(why); return }
+        guard !familiesMode, activePets.contains(where: { $0.ready }), defaults.bool(forKey: "gptQuota"), !codexInFlight else { return }
+        if why == .now, let payload = codexPayload { allPets.forEach { $0.js("setCodexQuota(\(payload))") } }
+        codexBusyAt = activePets.compactMap { $0.codexBusyAt }.max()
         if why == .tick && (screensAsleep || userHidden) { return }
         let since = Date().timeIntervalSince(codexLiveAt)
         let askLive: Bool
@@ -52,11 +55,12 @@ extension App {
         let tag = rateLimits != nil ? "Codex 服务，\(String(format: "%.1f", Double(ms) / 1000)) 秒" : "没问到：\(error ?? "原因不明")"
         lastGptQuota = "\(Self.clock()) （\(tag)）" + (codexLast.map { (rateLimits == nil ? "沿用 \(Self.hm($0.at)) 的数：" : "") + CodexQuotaSource.brief($0.rateLimits) } ?? "")
         pushSettings()
-        guard let last = codexLast else { js("setCodexQuota(null)"); return }
+        guard let last = codexLast else { allPets.forEach { $0.js("setCodexQuota(null)") }; return }
         var p = CodexQuotaSource.payload(source: rateLimits != nil ? "live" : "stale", rateLimits: last.rateLimits, error: error, ms: ms)
         p["at"] = last.at.timeIntervalSince1970
         guard let d = try? JSONSerialization.data(withJSONObject: p), let arg = String(data: d, encoding: .utf8) else { return }
-        js("setCodexQuota(\(arg))")
+        codexPayload = arg
+        allPets.forEach { $0.js("setCodexQuota(\(arg))") }
     }
 
     // MARK: Gemini 额度（可选，默认关）
@@ -65,11 +69,16 @@ extension App {
     // 只调「用户状态」接口、只取额度数字；令牌只在内存里用，不存盘、不外传。Antigravity 没开就不显示。
 
     func refreshAntigravityQuota() {
-        guard ready, defaults.bool(forKey: "agyQuota") else { return }
+        if owner !== self { owner.refreshAntigravityQuota(); return }
+        guard activePets.contains(where: { $0.ready }), defaults.bool(forKey: "agyQuota"), !agyInFlight else { return }
+        if let payload = agyPayload { allPets.forEach { $0.js("setQuota('gemini', \(payload))") } }
+        guard Date().timeIntervalSince(agyLiveAt) >= 20 else { return }
+        agyLiveAt = Date()
+        agyInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             guard let (pid, token) = self.antigravityServer() else {
-                DispatchQueue.main.async { self.js("setQuota('gemini', null)"); self.lastAgyNote = "\(Self.clock()) 没找到 Antigravity 的服务进程" }
+                DispatchQueue.main.async { self.agyInFlight = false; self.lastAgyNote = "没找到 Antigravity 的服务进程"; self.allPets.forEach { $0.js("setQuota('gemini', null)") } }
                 return
             }
             let ports = self.agyPort?.pid == pid ? [self.agyPort!.port] : self.listeningPorts(pid)
@@ -114,7 +123,7 @@ extension App {
     /// 2026-10-14 实测：View Usage 已经 98%，用户状态里还是 100%。和 Windows 版 AntigravityQuota.Read 一致
     static let agyMethods = ["RetrieveUserQuotaSummary", "GetUserStatus"]
     func askAntigravity(pid: Int32, token: String, ports: [Int], method: Int = 0) {
-        guard let port = ports.first else { return }
+        guard let port = ports.first else { DispatchQueue.main.async { self.agyInFlight = false }; return }
         var req = URLRequest(url: URL(string: "https://127.0.0.1:\(port)/exa.language_server_pb.LanguageServerService/\(Self.agyMethods[method])")!)
         req.httpMethod = "POST"
         req.timeoutInterval = 5
@@ -135,7 +144,7 @@ extension App {
             }
             self.agyPort = (pid, port)
             guard let json = try? JSONSerialization.data(withJSONObject: q), let arg = String(data: json, encoding: .utf8) else { return }
-            DispatchQueue.main.async { self.js("setQuota('gemini', \(arg))") }
+            DispatchQueue.main.async { self.agyInFlight = false; self.agyPayload = arg; if self.defaults.bool(forKey: "agyQuota") { self.allPets.forEach { $0.js("setQuota('gemini', \(arg))") } } }
         }.resume()
     }
 

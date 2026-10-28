@@ -4,6 +4,15 @@ import ServiceManagement
 import WebKit
 
 extension App {
+    var independentOutfit: Bool { family != nil && client != nil }
+
+    /// Per-client outfit is the explicit exception to shared user settings; empty means the original outfit.
+    var selectedSkins: [String: String] {
+        var result = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        if independentOutfit, let family { result[family] = windowDefaults.string(forKey: "outfitV1") ?? "" }
+        return result
+    }
+
     // MARK: 角色
 
     /// 设置「角色」页卡片墙用的图：角色文件夹里的展示立绘 portrait（衣服卡）、探头头像 avatar（角色卡）和待机图 idle，只给存在的文件
@@ -61,7 +70,7 @@ extension App {
             skinSprites[dir.lastPathComponent] = sp
             skinInfo[dir.lastPathComponent] = info
         }
-        let chosen = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        let chosen = selectedSkins
         for dir in dirs {
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("character.json")),
                   var info = try? JSONSerialization.jsonObject(with: data) as? [String: Any], info["skinOf"] == nil else { continue }
@@ -110,11 +119,12 @@ extension App {
 
     /// why：为什么换（front 跟随前台 / event 跟随事件 / host 按模型 / manual 菜单或设置 / startup / skin 换衣服），记进换角色记录（反馈「角色换得不对」用）
     func switchTo(_ id: String, why: String, via: String = "") {
-        let skins = defaults.dictionary(forKey: "skins") as? [String: String] ?? [:]
+        guard family == nil || family == id else { return }
+        let skins = selectedSkins
         Ledger.append(switchesURL, ["from": currentId ?? "", "to": id, "skin": skins[id] ?? "", "why": why, "via": via])
         if id != currentId { appLog("换角色 \(currentId ?? "-") → \(id)（\(why)\(via.isEmpty ? "" : " " + via)）") }
         currentId = id
-        defaults.set(id, forKey: "character")   // 重启后恢复（didFinish 里）；Windows 的 SwitchTo 也是这么记的
+        if family == nil { defaults.set(id, forKey: "character") }   // 重启后恢复（didFinish 里）；Windows 的 SwitchTo 也是这么记的
         if dock != nil, !dockOut { DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.applyDock() } }   // 换了角色，切口位置跟着变
         js("setCharacter(\(quote(id)))")
         pushSettings()
@@ -164,7 +174,7 @@ extension App {
 
     @objc func appActivated(_ note: Notification) {
         followEventGeneration &+= 1
-        spaceChanged(note)
+        allPets.forEach { $0.spaceChanged(note) }
         guard ready, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         pendingSwitch?.cancel()
         guard followApps, let bundle = app.bundleIdentifier, let mapped = appToCharacter[bundle] ?? hostApp(bundle) else { return }

@@ -14,5 +14,17 @@ import Cocoa
 import ServiceManagement
 import WebKit
 
-let defaults = UserDefaults.standard
-let stateDir = URL(fileURLWithPath: "/tmp/crosspet", isDirectory: true)
+// A separate preference domain is required for tests: CFFIXED_USER_HOME alone does
+// not isolate cfprefsd's per-user application domains.
+let preferenceDomain = ProcessInfo.processInfo.environment["CROSSPET_PREFERENCES_SUITE"] ?? "io.github.crosspet"
+let appPreferences = ProcessInfo.processInfo.environment["CROSSPET_PREFERENCES_SUITE"].flatMap { UserDefaults(suiteName: $0) } ?? UserDefaults.standard
+let stateDir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CROSSPET_STATE_DIR"] ?? "/tmp/crosspet", isDirectory: true)
+
+/// Install status, plugin versions and the config watcher describe the machine, not one pet, so every pet window reads the same copy.
+enum Shared {
+    static var integrated: [String]?
+    static var pluginStatus = "[]"
+    static var configStamp: Date?
+    static var healTimes: [Date] = []
+    static var healPending: DispatchWorkItem?
+}

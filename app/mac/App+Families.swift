@@ -146,7 +146,7 @@ extension App {
                   let data = try? Data(contentsOf: file) else { continue }
             // Cache validated files even when they belong to the other client or are old/duplicate.
             // Invalid/incomplete writes keep retrying; aggregate deadlines still run every poll.
-            let result = state.ingestResult(data)
+            _ = state.ingestResult(data)
             _ = stamp // Cache installation is delivered in the renderer optimization PR.
 
         }

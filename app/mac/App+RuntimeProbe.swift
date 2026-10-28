@@ -193,7 +193,52 @@ private final class ClientRuntimeProbe {
         app.refreshAppearance(hosts: [:])
         check(!pet.hiddenForAppearance, "explicit always ignores absent host")
         if ProcessInfo.processInfo.environment["CROSSPET_PROBE_FEATURE_ONLY"] == "1" { finish(); return }
-        releaseAndRestore(pet)
+        quotaAndSilence(pet)
+    }
+    private func quotaAndSilence(_ pet: App) {
+        verifyQuota(pet)
+    }
+    private func verifyQuota(_ pet: App) {
+        let pair = app.activePets.filter { $0.family == "claude" }
+        let dir = stateDir.appendingPathComponent("clients")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for target in pair {
+            let client = target.client!, text = client == "tui" ? "15% synthetic" : "65% synthetic"
+            let envelope: [String: Any] = ["schema": 1, "family": "claude", "source": "claude-code", "client": client,
+                "quota": ["text": text, "low": false]]
+            if let data = try? JSONSerialization.data(withJSONObject: envelope) {
+                try? data.write(to: dir.appendingPathComponent("claude-\(client)-quota.json"), options: .atomic)
+            }
+            target.pollFamilyStates()
+        }
+        func inspectPair(_ index: Int) {
+            guard index < pair.count else { silence(pet); return }
+            let target = pair[index], expected = target.client == "tui" ? "15% synthetic" : "65% synthetic"
+            inspect(target, "JSON.stringify({text:quota.claude?.text||''})") { [self] result in
+                check(result["text"] as? String == expected, "\(target.petId ?? "?") native file-to-view quota is client scoped")
+                inspectPair(index + 1)
+            }
+        }
+        inspectPair(0)
+    }
+    private func silence(_ pet: App) {
+        let original = pet.familyState, now = Date().timeIntervalSince1970
+        let stale = FamilyState(family: pet.family!, client: pet.client)
+        let snapshot: [String: Any] = ["schema": 1, "family": pet.family!, "source": "claude-code", "client": pet.client!,
+            "sessionId": "synthetic-silent", "model": "probe", "status": "Thinking", "pose": "thinking", "event": "PreInvocation",
+            "ts": now - 181, "observedAt": now - 181, "sequence": 1, "producerId": "synthetic-stale", "turnId": "silent-turn"]
+        if let data = try? JSONSerialization.data(withJSONObject: snapshot) { check(stale.ingest(data), "native accepts unfinished synthetic silent task") }
+        pet.familyState = stale; pet.familyPayload = ""; pet.familySessionPayload = ""
+        pet.windowDefaults.set("onWork", forKey: "appearanceMode")
+        pet.pollFamilyStates(); app.refreshAppearance(hosts: [:])
+        check(!pet.hiddenForAppearance, "unfinished silent task remains visible under onWork")
+        inspect(pet, "JSON.stringify({badge:document.getElementById('familyStatus')?.textContent||''})") { [self] result in
+            check((result["badge"] as? String)?.contains("状态待确认") == true, "native silent task renders uncertainty rather than success or offline")
+            pet.familyState = original; pet.familyPayload = ""; pet.familySessionPayload = ""
+            pet.windowDefaults.set("always", forKey: "appearanceMode")
+            pet.pollFamilyStates(); app.refreshAppearance(hosts: [:])
+            releaseAndRestore(pet)
+        }
     }
     private func releaseAndRestore(_ pet: App) {
         restoredPet = pet
@@ -213,7 +258,7 @@ private final class ClientRuntimeProbe {
             check(abs(Double(pet.petScale) - (expectedSizes[pet.petId!] ?? 0)) < 0.001, "re-enable restores independent size")
             check(pet.windowDefaults.string(forKey: "outfitV1") == expectedOutfits[pet.petId!], "re-enable restores independent outfit")
             check(pet.familyState?.records.count == 1, "re-enable preserves task state")
-            check(pet.windowDefaults.array(forKey: "origin") as? [Double] == expectedOrigins[pet.petId!], "re-enable restores independent position")
+            check(pet.windowDefaults.array(forKey: "origin") as? [Double] == expectedOrigins[pet.petId!], "re-enable restores independent position", actual: ["expected": expectedOrigins[pet.petId!] ?? [], "actual": pet.windowDefaults.array(forKey: "origin") ?? [], "frame": [pet.panel.frame.minX, pet.panel.frame.minY]])
             waitForRenderer(pet, "recreated renderer identity, outfit and task", { [self] actual in
                 actual["id"] as? String == pet.family && actual["skin"] as? String == expectedOutfits[pet.petId!] &&
                     actual["switching"] as? Bool == false && (actual["badge"] as? String)?.contains("思考中") == true

@@ -14,6 +14,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     weak var coordinator: App?
     var familyPets: [App] = []
     var familyState: FamilyState?
+    let familyFileCache = SnapshotFileCache()
     var familyPayload = ""
     var familySessionPayload = ""
     var clientQuotaPayloads: [String: String] = [:]

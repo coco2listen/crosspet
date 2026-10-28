@@ -26,6 +26,7 @@ extension App {
         hitRects = []; hitRectsAt = .distantPast
         dock = nil; dockTucked = false; dockOut = false; dockHover = false
         dockEnterAt = nil; dockLeaveAt = nil; dockCut = [:]
+        familyFileCache.reset()
         stamps = [:]; familyPayload = ""; familySessionPayload = ""; clientQuotaPayloads = [:]
     }
 }

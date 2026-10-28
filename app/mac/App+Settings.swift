@@ -53,7 +53,9 @@ extension App {
         panel.setFrame(f, display: true)
         web.pageZoom = scale
         shownFootPt = pageFoot * scale
-        windowDefaults.set([f.minX, f.minY], forKey: "origin")
+        // AppKit may align the requested frame to display pixels. Persist the actual
+        // position so tearing down and rebuilding a renderer does not introduce drift.
+        windowDefaults.set([panel.frame.minX, panel.frame.minY], forKey: "origin")
     }
 
     /// 人物大小 / 文字大小变了：交给网页算画布（规则在 app/web/text-size.js），按回来的尺寸设窗口。

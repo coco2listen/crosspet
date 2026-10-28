@@ -14,11 +14,19 @@ function harness() {
     credentials: { resolve: async () => ({ value: 'sk-test' }) } }
   apply(ctx, { stateDir: join(dataDir, 'state'), dataDir, autostart: false, balanceGapMs: 1e9 })
   const fire = async (n, ...a) => { for (const h of handlers[n] || []) await h(...a, async () => {}) }
-  const rows = async () => {
-    await new Promise((r) => setTimeout(r, 80))
-    const p = join(dataDir, 'events', 'deepseek.jsonl')
-    return existsSync(p) ? readFileSync(p, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []
+  const rows = async (lastTool) => {
+    const p = join(dataDir, 'events', 'deepseek.jsonl'), deadline = Date.now() + 3000
+    let result = []
+    // Ledger writes are intentionally queued off the hook path. Wait for the observable
+    // last event, not an 80ms wall-clock guess that fails during parallel builds.
+    do {
+      try { result = existsSync(p) ? readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)) : [] } catch {}
+      if (result.length && (!lastTool || result.at(-1).tool === lastTool)) return result
+      await new Promise(r => setTimeout(r, 10))
+    } while (Date.now() < deadline)
+    return result
   }
+
   return { fire, rows, dataDir }
 }
 
@@ -36,7 +44,7 @@ test('不记内容：消息、工具参数都不进记录', async () => {
   const h = harness()
   await h.fire('agent/pre-step', { messages: [{ role: 'user', content: 'SECRET-DS-1' }] })
   await h.fire('tools/pre-execute', { name: 'Bash', arguments: { command: 'cat SECRET-DS-2' } })
-  await h.rows()
+  await h.rows('bash')
   const text = readFileSync(join(h.dataDir, 'events', 'deepseek.jsonl'), 'utf8')
   assert.ok(!text.includes('SECRET'), text)
   assert.ok(text.includes('"tool":"bash"'))
@@ -45,7 +53,7 @@ test('不记内容：消息、工具参数都不进记录', async () => {
 test('超过 240 行截回 200 行，最后一行是最新的', async () => {
   const h = harness()
   for (let i = 0; i < 245; i++) await h.fire('tools/pre-execute', { name: `t${i}`, arguments: {} })
-  const rows = await h.rows()
+  const rows = await h.rows('t244')
   assert.ok(rows.length >= 200 && rows.length <= 240, String(rows.length))
   assert.equal(rows.at(-1).tool, 't244')
 })

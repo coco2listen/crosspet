@@ -55,8 +55,7 @@ extension App {
                 if pet.panel == nil { pet.createPetWindow() }
                 pet.applyHiddenState()
                 pet.panel.orderFrontRegardless()
-            } else if pet.family == nil || !familiesMode { pet.releasePetWindow() }
-            else { pet.panel?.orderOut(nil) }
+            } else { pet.releasePetWindow() }
         }
         refreshAppearance()
         updateSharedResets()
@@ -141,14 +140,10 @@ extension App {
     func pollFamilyStates() {
         guard !pauseRealEvents, let family, let state = familyState else { return }
         let dir = stateDir.appendingPathComponent("families/\(family)", isDirectory: true)
-        for file in (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] where file.pathExtension == "json" {
-            guard let stamp = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                  let data = try? Data(contentsOf: file) else { continue }
-            // Cache validated files even when they belong to the other client or are old/duplicate.
-            // Invalid/incomplete writes keep retrying; aggregate deadlines still run every poll.
-            _ = state.ingestResult(data)
-            _ = stamp // Cache installation is delivered in the renderer optimization PR.
-
+        let files = ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "json" }
+        familyFileCache.retain(Set(files.map(\.path)))
+        for file in files {
+            familyFileCache.read(file) { data in state.ingestResult(data).cacheable }
         }
         for (key, record) in state.records {
             if let pid = record.pid, pid > 1, let producer = record.producerId,

@@ -137,12 +137,19 @@ extension App {
     /// 插件版本（只读检查，不改任何配置）：有新版本 / 更新了还没重开时，设置页那一行挂提醒；tellPet：桌宠刚启动，让她闲下来时说一句。
     /// 只提醒、不自动更新——改别家配置一律让用户自己点「更新」。和 Windows 版 RefreshPlugins 一致
     func refreshPlugins(tellPet: Bool = false) {
+        if owner !== self { owner.refreshPlugins(tellPet: tellPet); return }
+        // Several renderers finish navigation together. Installation status is global;
+        // one startup check and one speaker suffice, including renderer recreation.
+        guard !Shared.pluginCheckInFlight else { return }
+        if tellPet && Date().timeIntervalSince(Shared.pluginCheckedAt) < 20 { return }
+        Shared.pluginCheckInFlight = true; Shared.pluginCheckedAt = Date()
         runIntegrate(["plugins"]) { [weak self] out, code in
+            Shared.pluginCheckInFlight = false
             guard let self, code == 0, let last = out.split(separator: "\n").last.map(String.init),
                   (try? JSONSerialization.jsonObject(with: Data(last.utf8))) is [Any] else { return }
             DispatchQueue.main.async {
                 Shared.pluginStatus = last
-                if tellPet { self.activePets.forEach { $0.js("setPluginUpdates(\(last))") } }
+                if tellPet { self.activePets.first(where: { $0.ready })?.js("setPluginUpdates(\(last))") }
                 self.pushSettings()
             }
         }

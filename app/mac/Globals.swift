@@ -24,6 +24,8 @@ let stateDir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CROSSPE
 enum Shared {
     static var integrated: [String]?
     static var pluginStatus = "[]"
+    static var pluginCheckInFlight = false
+    static var pluginCheckedAt = Date.distantPast
     static var configStamp: Date?
     static var healTimes: [Date] = []
     static var healPending: DispatchWorkItem?

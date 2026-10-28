@@ -12,6 +12,13 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { lowThresholds, summarize } from "./balance.js";
 
+// 运行于明确的桌面包才标为 desktop；测试、CLI 或未知宿主不冒充桌面端。
+export function clientOf(executable) {
+  return /[\\/]DeepSeek Harness\.app[\\/]/.test(executable)
+    ? { client: "desktop", clientReason: "executable:deepseek-harness" }
+    : { client: "unknown", clientReason: "no-client-evidence" };
+}
+
 export const name = "crosspet";
 export const inject = ["credentials"];
 
@@ -60,6 +67,7 @@ export function apply(ctx, config = {}) {
   const dir = config.stateDir || process.env.CROSSPET_STATE_DIR || (process.platform === "win32" ? join(data, "state") : "/tmp/crosspet");
   const lowBalance = lowThresholds(config.lowBalance);  // 按币种的门槛，见 balance.js
   let tools = 0;
+  const origin = { host: ID, ...clientOf(process.execPath) };
 
   let writes = 0;
   async function writeJson(file, data) {
@@ -98,7 +106,7 @@ export function apply(ctx, config = {}) {
       mkdir(dir, { recursive: true }).then(() => writeFile(join(dir, "seen-deepseek"), String(Math.floor(seenAt / 1000)))).catch(() => {});
     }
     ledger(event, tool, "shown", `${character} ${pose}`);
-    writeJson(`${character}-state.json`, { pose, event, tool, ts: Date.now() / 1000 }).catch((e) =>
+    writeJson(`${character}-state.json`, { pose, event, tool, ts: Date.now() / 1000, ...origin }).catch((e) =>
       ctx.logger?.warn?.(`crosspet: 写状态失败 ${String(e)}`),
     );
   }
@@ -224,7 +232,7 @@ export function apply(ctx, config = {}) {
     const now = Date.now() / 1000;
     for (const [c, map] of Object.entries(perChar)) if (c !== who && map[session.id]) { delete map[session.id]; sessionsDirty.add(c); }   // 中途换了模型
     const map = (perChar[who] ??= {});
-    map[session.id] = { pose, event: ev, ts: now };
+    map[session.id] = { pose, event: ev, ts: now, ...origin, session: session.id };
     for (const [k, v] of Object.entries(map)) if (now - v.ts > 600) delete map[k];
     sessionsDirty.add(who);
     // 合并 0.2 秒内的连续事件再写盘
@@ -293,8 +301,8 @@ export function apply(ctx, config = {}) {
   const OFFICIAL = new Set(["deepseek-account", "deepseek-official"]);
   let lastQuota = null;
   function publishQuota() {
-    if (provider && !OFFICIAL.has(provider)) return writeJson(`${ID}-quota.json`, { text: "", low: false }).catch(() => {});
-    if (lastQuota) return writeJson(`${ID}-quota.json`, lastQuota).catch(() => {});
+    if (provider && !OFFICIAL.has(provider)) return writeJson(`${ID}-quota.json`, { text: "", low: false, ...origin }).catch(() => {});
+    if (lastQuota) return writeJson(`${ID}-quota.json`, { ...lastQuota, ...origin }).catch(() => {});
     return Promise.resolve();
   }
   const setQuota = (q) => { lastQuota = q; return publishQuota(); };

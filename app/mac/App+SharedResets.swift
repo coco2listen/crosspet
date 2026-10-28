@@ -62,6 +62,7 @@ extension App {
 
     func deliverSharedResets(raw: String?, ok: Bool, wait: Double) {
         let value = raw ?? "null"
-        allPets.forEach { $0.js("sharedResetResult(\(value), \(ok), \(wait))") }
+        let speaker = activePets.first { $0.family == "gpt" } ?? activePets.first
+        allPets.forEach { pet in pet.js("sharedResetResult(\(value), \(ok), \(wait), \(pet === speaker))") }
     }
 }

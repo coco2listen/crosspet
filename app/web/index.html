@@ -99,6 +99,7 @@ html.tucked-art #body { animation: none !important; transform: none !important; 
   color: #6b4a3a; font-size: calc(11px * var(--k)); min-height: calc(14px * var(--k)); }
 #caption:empty { visibility: hidden; }
 html.no-name #caption { display: none; }
+html.family-mode #sessionStatus { display: none; }
 html.family-mode #foot { min-height: calc(80px * max(1, var(--k))); }
 html.tucked #familyStatus { display: none; }
 #familyStatus { margin-top: calc(2px * var(--k)); padding: calc(1px * var(--k)) calc(8px * var(--k)); border-radius: calc(7px * var(--k)); font: calc(10px * var(--k)) system-ui; color: #6b4a3a; background: rgba(255,255,255,.85); pointer-events: none; }
@@ -450,9 +451,9 @@ function setCodexResets(on, shared = false) {
 }
 // 查一次：成功更新 resetsData。返回 { ok: 这次查到了没有, wait: 下次多久后再查（毫秒）}。
 // 失败时保留上次查到的（额度下方那一行、主动提醒照用：官方宣布不会因为断网就失效），但问她时照实说连不上
-function sharedResetResult(raw, ok, wait) {
+function sharedResetResult(raw, ok, wait, announce = true) {
   const d = raw && CodexResets.parse(raw)
-  if (resetsOn && !devResetsSaved && d) { resetsData = d; resetsAt = Date.now(); renderQuota(); announceReset() }
+  if (resetsOn && !devResetsSaved && d) { resetsData = d; resetsAt = Date.now(); renderQuota(); if (announce) announceReset() }
   for (const done of sharedResetWaiters.splice(0)) done({ok: !!ok && !!d, wait})
 }
 async function fetchResets() {

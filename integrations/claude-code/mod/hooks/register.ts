@@ -109,10 +109,12 @@ async function writeLedger($: EngineInterface, ev: string, tool: string, sid: st
 
 // 只有用户启用多宠才发布旁路文件。关闭时继续原有单宠读写路径。
 async function multiEnabled($: EngineInterface): Promise<boolean> {
+  try {
   const custom = await $.env.get('CROSSPET_DATA_DIR')
   const local = await $.env.get('LOCALAPPDATA')
   const data = custom || (local ? `${local}\\CrossPet` : `${await $.env.get('HOME')}/Library/Application Support/CrossPet`)
-  return $.fs.exists(`${data}/multi-pets-enabled`)
+  return await $.fs.exists(`${data}/multi-pets-enabled`)
+  } catch { return false } // 读取标记失败时保留单宠路径。
 }
 const familySequences = new Map<string, number>()
 const familyTools = new Map<string, number>()

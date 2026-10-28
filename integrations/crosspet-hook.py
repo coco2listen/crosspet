@@ -425,7 +425,8 @@ def client_from_evidence(host, entrypoint, ancestors):
         if any("/CrossPet.app/" in path or "/app-server-daemon/" in path for path in ancestors):
             return "unknown", "ancestor:service"
         codex = [path for path in ancestors if Path(path).name == "codex"]
-        if codex and any("/ChatGPT.app/" in path or "/Codex.app/" in path for path in ancestors):
+        if codex and any(path.endswith("/ChatGPT.app/Contents/MacOS/ChatGPT")
+                         or path.endswith("/Codex.app/Contents/MacOS/Codex") for path in ancestors):
             return "desktop", "ancestor:desktop-codex"
         if codex:
             return "tui", "ancestor:codex"

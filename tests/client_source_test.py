@@ -22,7 +22,9 @@ class ClientSourceTest(unittest.TestCase):
 
     def test_codex_executable_ancestry(self):
         self.assertEqual(classify('gpt', '', ['/opt/bin/codex'])[0], 'tui')
-        self.assertEqual(classify('gpt', '', ['/Applications/ChatGPT.app/Contents/Resources/codex'])[0], 'desktop')
+        self.assertEqual(classify('gpt', '', ['/Applications/ChatGPT.app/Contents/Resources/codex'])[0], 'tui')
+        self.assertEqual(classify('gpt', '', ['/Applications/ChatGPT.app/Contents/Resources/codex', '/Applications/ChatGPT.app/Contents/MacOS/ChatGPT'])[0], 'desktop')
+        self.assertEqual(classify('gpt', '', ['/opt/bin/codex', '/Applications/Codex.app/Contents/MacOS/Codex'])[0], 'desktop')
         self.assertEqual(classify('gpt', '', ['/opt/bin/codex', '/Applications/CrossPet.app/Contents/MacOS/CrossPet'])[0], 'unknown')
         self.assertEqual(classify('gpt', '', ['/opt/bin/node', '/bin/zsh'])[0], 'unknown')
         self.assertEqual(classify('gpt', '', ['/Applications/ChatGPT.app/Contents/MacOS/ChatGPT'])[0], 'unknown')

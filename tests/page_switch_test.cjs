@@ -70,6 +70,7 @@ function makePage() {
     replaceChildren(...c) { this.children = []; c.forEach(x => this.appendChild(x)) }
     remove() { if (this.parentNode) { const p = this.parentNode; p.children = p.children.filter(x => x !== this); this.parentNode = null } }
     querySelector(sel) {
+      if (sel === '.badge') return this._badge ||= new El('div')
       if (sel !== 'svg') return null
       if (!this._svg) { const s = new El('svg'); s.getBBox = () => ({ x: 0, y: 0, width: 10, height: 10 }); s.querySelectorAll = () => []; this._svg = s }
       return this._svg
@@ -81,7 +82,7 @@ function makePage() {
     closest() { return null }
   }
   const els = {}
-  for (const id of ['wrap', 'bubble', 'stage', 'aura', 'shadow', 'body', 'a', 'b', 'blink', 'fx', 'cards', 'more', 'newsCard', 'newsText', 'poof', 'foot', 'caption', 'quota'])
+  for (const id of ['wrap', 'bubble', 'stage', 'aura', 'shadow', 'body', 'a', 'b', 'blink', 'fx', 'cards', 'more', 'newsCard', 'newsText', 'poof', 'foot', 'caption', 'sessionStatus', 'quota'])
     els[id] = new El(['a', 'b', 'blink'].includes(id) ? 'img' : 'div', id)
   els.a.classList.add('on'); els.bubble.classList.add('hide'); els.newsCard.classList.add('hidden')
   els.cards.appendChild(els.more)
@@ -108,7 +109,7 @@ function makePage() {
   ctx.globalThis = ctx
   vm.createContext(ctx)
   vm.runInContext('Math.random = () => 0.99', ctx)   // 不随机出闲时小动作、彩蛋
-  for (const f of ['effects.js', 'text-size.js', 'codex-quota.js', 'quota-aggregate.js', 'plugin-update.js', 'stand-in.js', 'follow-policy.js', 'codex-resets.js', 'peak-hours.js', 'whats-new.js'])
+  for (const f of ['effects.js', 'text-size.js', 'codex-quota.js', 'quota-aggregate.js', 'plugin-update.js', 'stand-in.js', 'follow-policy.js', 'session-status.js', 'codex-resets.js', 'peak-hours.js', 'whats-new.js'])
     vm.runInContext(fs.readFileSync(path.join(WEB, f), 'utf8'), ctx, { filename: f })
   const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').replace(/\r\n/g, '\n')
   const start = html.lastIndexOf('<script>\n'), end = html.lastIndexOf('</script>')
@@ -121,7 +122,7 @@ function makePage() {
     function __state() {
       const cards = $('cards').children.filter(c => c !== $('more'))
       return { charId, pose, characterTarget, egg: egg && { host: egg.host }, multi: multi && { busy: multi.busy, asking: multi.asking },
-        cards: cards.length, bubble: $('bubble').classList.contains('hide') ? '' : $('bubble').textContent, caption: $('caption').textContent,
+        cards: cards.length, sessionStatus: $('sessionStatus').textContent, bubble: $('bubble').classList.contains('hide') ? '' : $('bubble').textContent, caption: $('caption').textContent,
         stageHidden: $('stage').classList.contains('swap'), fxHidden: $('fx').classList.contains('hide') }
     }
     // 钩子写的时间：外壳下一次 0.3 秒轮询才交过来，比现在略早一点
@@ -157,6 +158,45 @@ async function fresh() {
 function assert(c, msg) { if (!c) throw Error(msg) }
 
 const cases = [
+  ['idle_single_pet_has_no_waiting_label', async e => {
+    assert(e.state().sessionStatus === '', 'fresh single pet gained a waiting label')
+  }],
+  ['silent_work_shows_uncertainty_and_new_event_restores_work', async e => {
+    e.run(`hook('gpt','writing','PreToolUse')`)
+    await e.advance(179000)
+    assert(e.state().sessionStatus === '', 'work marked stale before 180 seconds')
+    await e.advance(1500)
+    assert(e.state().sessionStatus === '状态待确认', 'silent work lost its uncertainty label')
+    assert(e.run(`charState.gpt.event`) === 'PreToolUse', 'silence rewrote the task event')
+    e.run(`hook('gpt','reading','PreToolUse')`)
+    await e.advance(3000)
+    assert(e.state().sessionStatus === '' && e.state().pose === 'reading', 'new event did not restore work')
+  }],
+  ['silent_sessions_leave_uncertainty_after_juggling_ends', async e => {
+    e.run(`setSessions('gpt', sess(['s1','writing'],['s2','reading']))`)
+    await e.advance(181000)
+    assert(!e.state().multi && e.state().sessionStatus === '状态待确认', 'expired session cards silently became idle')
+  }],
+  ['old_character_uncertainty_does_not_cross_switch', async e => {
+    e.run(`hook('gpt','thinking','BeforeModel')`)
+    await e.advance(179000)
+    e.run(`setCharacter('claude',true)`)
+    await e.advance(2000)
+    assert(e.state().charId === 'claude' && e.state().sessionStatus === '', 'GPT uncertainty crossed into Claude')
+  }],
+  ['new_turn_invalidates_old_silence_timer', async e => {
+    e.run(`hook('gpt','thinking','BeforeModel',{turn:'old'})`)
+    await e.advance(179000)
+    e.run(`hook('gpt','writing','PreToolUse',{turn:'new'})`)
+    await e.advance(3000)
+    assert(e.state().sessionStatus === '' && e.state().pose === 'writing', 'old turn timer marked a new turn stale')
+  }],
+  ['empty_snapshot_explicitly_exposes_waiting_without_inventing_task', async e => {
+    e.run(`setSessionStatus(null)`)
+    assert(e.state().sessionStatus === '等待会话事件', 'missing evidence was not identified as waiting')
+    assert(e.run(`charState.gpt === undefined`), 'waiting invented a task')
+  }],
+
   ['async_reset_answer_is_cancelled_after_switching_away_and_back', async e => {
     e.run(`resetsOn=true; devResetsSaved={}; var __resetAnswers=0; tellReset=()=>{__resetAnswers++}; void askReset()`)
     await e.advance(100)

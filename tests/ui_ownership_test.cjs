@@ -29,7 +29,7 @@ function clock() {
 function makeEnv(html) {
   const t = clock()
   class FakeDate extends Date { constructor(...a) { super(...(a.length ? a : [t.now()])) } static now() { return t.now() } }
-  const context = vm.createContext({ Date: FakeDate, setTimeout: t.set, clearTimeout: t.clear,
+  const context = vm.createContext({ SessionStatus: require('../app/web/session-status.js'), Date: FakeDate, setTimeout: t.set, clearTimeout: t.clear,
     setInterval: t.set, clearInterval: t.clear, console })
   const setup = `
     let charId = 'gpt', pose = 'idle', poseSince = Date.now(), currentUrl = '', swappedAt = 0
@@ -67,7 +67,7 @@ function makeEnv(html) {
     function capture(){return {charId,pose,bubble:$('bubble').textContent,fx:$('fx').innerHTML,fxHidden:$('fx').classList.contains('hide'),charState:JSON.parse(JSON.stringify(charState)),history:[...history],effectHistory:[...effectHistory],generation:characterGeneration}}
     function hook(id,p,event,extra={}){applyCharState(id,{pose:p,event,ts:Date.now()/1000,...extra})}
   `
-  const funcs = ['setBlinkSrc','characterTimeout','clearCharacterTimers','setFx','restPose','show','setCharacter','watchStuck','applyCharState','aiActivity','setSessions','noteVerdict'].map(n => fn(html,n,n==='setBlinkSrc'||n==='characterTimeout'||n==='clearCharacterTimers')).join('\n')
+  const funcs = ['setBlinkSrc','characterTimeout','clearCharacterTimers','setFx','restPose','show','setCharacter','setSessionStatus','watchStuck','applyCharState','aiActivity','setSessions','noteVerdict'].map(n => fn(html,n,n==='setBlinkSrc'||n==='characterTimeout'||n==='clearCharacterTimers')).join('\n')
   vm.runInContext(setup + '\n' + funcs, context)
   const run = code => vm.runInContext(code, context)
   run(`hook('grok','idle','SessionStart');hook('claude','idle','SessionStart')`)

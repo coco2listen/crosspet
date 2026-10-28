@@ -69,10 +69,13 @@ html.frozen *, html.frozen *::before, html.frozen *::after { animation-play-stat
 #more { position: absolute; right: 2px; bottom: 6px; padding: 1px 7px; border-radius: 9px; background: rgba(255,255,255,.9); color: #4a2418;
   font: bold 11px/16px sans-serif; box-shadow: 0 1px 3px rgba(0,0,0,.15); opacity: 0; transition: opacity .3s; }
 #more.on { opacity: 1; }
+#sessionStatus { color: #75675e; font: calc(11px * var(--k))/calc(15px * var(--k)) sans-serif; text-align: center; }
+#sessionStatus:empty { display: none; }
+.scard.uncertain .badge { background: #8a8178; opacity: 1; transform: none; }
 /* 贴边：缩在屏幕边上时只露半个身子（扒着边缘的立绘，没画时用平常的），额度、名牌、气泡、特效都藏起来 */
 html.tucked #bubble, html.tucked #fx, html.tucked #cards, html.tucked #aura, html.tucked #shadow { visibility: hidden; }
 /* 名牌、额度在最底下：直接拿出版面（只隐藏的话，透明窗口偶尔少擦它们底边那一行，缩进去那一下闪一条横线） */
-html.tucked #caption, html.tucked #quota { display: none !important; }   /* important：额度条、合并显示的 #quota.bars / .agg 写了 display: grid，选择器更具体，会盖过这条 */
+html.tucked #caption, html.tucked #sessionStatus, html.tucked #quota { display: none !important; }   /* important：额度条、合并显示的 #quota.bars / .agg 写了 display: grid，选择器更具体，会盖过这条 */
 /* 有贴边立绘时：立绘贴着窗口那条边放，切口就是窗口的边、也就是屏幕边缘。贴边 / 探出来两张换图时窗口不用动，原地淡入淡出 */
 html.tucked-art.tucked-left #wrap { align-items: flex-start; }
 html.tucked-art.tucked-right #wrap { align-items: flex-end; }
@@ -201,7 +204,7 @@ html.no-name #caption { display: none; }
     <div id="newsCard" class="hidden"><div id="newsText"></div><div class="btns"><button class="go" data-action="news-open">去看看 ›</button><button data-action="news-close">知道了</button></div></div>
     <div id="poof"><i style="--dx:-60px;--dy:-30px"></i><i style="--dx:55px;--dy:-35px"></i><i style="--dx:-45px;--dy:40px"></i><i style="--dx:50px;--dy:35px"></i><i style="--dx:0;--dy:-60px"></i></div>
   </div>
-  <div id="foot"><div id="caption"></div><div id="quota"></div></div>
+  <div id="foot"><div id="caption"></div><div id="sessionStatus"></div><div id="quota"></div></div>
 </div>
 <script>
 // 立绘加载失败：告诉 Windows 外壳记进日志（反馈里能看出是哪张图）。macOS 上没有这个通道，不做任何事
@@ -222,6 +225,7 @@ addEventListener('error', e => {
 <script src="plugin-update.js"></script>
 <script src="stand-in.js"></script>
 <script src="follow-policy.js"></script>
+<script src="session-status.js"></script>
 <script src="codex-resets.js"></script>
 <script src="whats-new.js"></script>
 <script src="peak-hours.js"></script>
@@ -385,7 +389,7 @@ function hitRects() {
     const b = shownRect()
     return JSON.stringify(b ? [[b.left - 4, b.top - 4, b.width + 8, b.height + 8].map(Math.round)] : [])
   }
-  for (const id of ['body', 'bubble', 'caption', 'quota', 'newsCard']) {
+  for (const id of ['body', 'bubble', 'caption', 'sessionStatus', 'quota', 'newsCard']) {
     const el = $(id)
     if (!el || (id === 'bubble' && el.classList.contains('hide')) || el.classList.contains('hidden')) continue
     const cs = getComputedStyle(el)
@@ -784,7 +788,8 @@ function setCharacter(id, quiet) {
     const s = charState[id]
     const busy = s && Date.now() / 1000 - s.ts < 60 && !TRANSIENT[s.pose] && s.pose !== 'idle'
     setPose(busy ? s.pose : restPose(), true)
-    if (busy) watchStuck()   // 接着演她自己的活：卡住兜底按她自己的时间重新算
+    if (s) watchStuck()   // 继续按原事件时间确认，不因切换角色重置沉默门槛
+    else if ($('sessionStatus')) $('sessionStatus').textContent = ''
     if (busy && s.pose === 'listening') thinkTimer = characterTimeout(() => show('thinking'), LISTEN_TO_THINKING)
     // 这个时段 / 节日还没打过招呼：演专属的登场动作；打过了就用平常那句（30 分钟冷却）
     if (quiet) say('')
@@ -1037,20 +1042,31 @@ function setName(id, name) {
   if (id === charId) $('caption').textContent = name
 }
 
-// 兜底：干活的样子（思考、读写、跑命令……）停了这么久没有任何新事件，就当这一轮已经停了，回去待机。
-// 有的 AI 被你中途打断时不发「结束」（Claude Code 标准钩子、Gemini CLI……），不然她会一直停在思考。
-// 「等你回答」不算：那是在等你，本来就可能很久
-const STUCK_AFTER = 3 * 60 * 1000
+// 沉默只能标为待确认，不能伪造完成；状态提示独立于会被其他台词替换的气泡。
+const STUCK_AFTER = SessionStatus.STALE_AFTER * 1000
 const NOT_WORKING = new Set(['idle', 'sleeping', 'asking', 'tired', 'hungry', 'happy', 'proud', 'oops', 'surprised'])
 let stuckTimer = null
+function setSessionStatus(snapshot) {
+  const status = SessionStatus.evaluate(snapshot, Date.now() / 1000)
+  const label = $('sessionStatus')
+  if (label) label.textContent = status.label
+  return status
+}
 function watchStuck() {
   clearTimeout(stuckTimer)
+  const state = charState[charId]
+  if (!state) return
+  const status = setSessionStatus(state)
+  if (status.kind !== 'work') return
   stuckTimer = characterTimeout(() => {
-    if (egg || multi || updatingNow || !pose || NOT_WORKING.has(pose) || pose.startsWith('greet_') || pose.startsWith('fest_')) return
+    if (charState[charId] !== state) return   // 同角色的新轮次也会使旧答复失效。
+    const next = setSessionStatus(state)
+    if (!next.stale) { if (next.kind === 'work') watchStuck(); return }
+    if (egg || multi || updatingNow || !pose || pose.startsWith('greet_') || pose.startsWith('fest_')) return
     clearTimeout(thinkTimer)
     show('idle', true)
     say('')
-  }, STUCK_AFTER)
+  }, Math.max(1, Math.ceil(status.remaining * 1000)))
 }
 
 // ---- 特效省电 ----
@@ -1128,7 +1144,8 @@ function setSessions(id, map) {
   refreshMulti()
 }
 function sessionKind(e, now) {
-  const age = now - Number(e.ts || 0)
+  const age = Math.max(0, now - Number(e.ts || 0))
+  if (SessionStatus.evaluate(e, now).stale) return 'uncertain'
   if (e.pose === 'asking') return age < 600 ? 'ask' : null
   if (e.pose === 'happy' || e.pose === 'proud') return age < SESSION_DONE_SHOW ? 'done' : null
   if ((e.pose === 'oops' || e.pose === 'surprised') && e.event === 'Stop') return age < SESSION_DONE_SHOW ? 'error' : null
@@ -1143,6 +1160,9 @@ function currentSessions() {
 }
 function refreshMulti() {
   const map = currentSessions(), now = Date.now() / 1000
+  // 会话文件也能单独刷新；卡片过期后仍保留最新证据的待确认提示。
+  const latest = [...Object.values(map), charState[charId]].filter(Boolean).sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))[0]
+  if (latest && !egg && !characterTarget) setSessionStatus(latest)
   const live = Object.entries(map).map(([sid, e]) => [sid, e, sessionKind(e, now)]).filter(x => x[2])
   const busy = live.filter(x => x[2] === 'work' || x[2] === 'ask').length
   if (!multi && (busy < 2 || egg || farewellLine !== null || updatingNow)) return
@@ -1170,10 +1190,12 @@ function refreshMulti() {
     flipCard(c)
     c.el.classList.toggle('done', kind === 'done')
     c.el.classList.toggle('ask', kind === 'ask')
-    const bad = kind === 'error' || e.pose === 'oops'
+    c.el.classList.toggle('uncertain', kind === 'uncertain')
+    c.el.querySelector('.badge').textContent = kind === 'uncertain' ? '?' : '✓'
+    const bad = kind === 'error' || (kind !== 'uncertain' && e.pose === 'oops')
     if (bad && !c.el.classList.contains('error')) c.el.classList.add('error')
     if (!bad) c.el.classList.remove('error')
-    setCardPose(c, kind === 'done' ? 'happy' : e.pose)
+    setCardPose(c, kind === 'uncertain' ? 'idle' : kind === 'done' ? 'happy' : e.pose)
   })
   const extra = multi.order.length - shown.length
   $('more').textContent = extra > 0 ? `+${extra}` : ''
@@ -1285,11 +1307,13 @@ function applyCharState(id, s) {
   if (egg) { noteVerdict(own, s, 'egg'); if (egg.host === own && s.pose && s.pose !== 'idle') endEgg(); return }
   if (id !== charId || !s.pose) { noteVerdict(own, s, s.pose ? 'not-current' : 'no-pose'); return }
   lastActive = Date.now()
+  const display = setSessionStatus(s)
   if (multi) { noteVerdict(own, s, 'multi'); return }   // 正在演多会话：她的样子由各对话的状态决定（refreshMulti），这里不动
   if (Date.now() < shakingUntil && s.event !== 'Stop') { noteVerdict(own, s, 'shaking'); return }
   noteVerdict(own, s, 'shown')   // 正被甩着：先只记下状态，甩停了 resumeWork 回到最新的活上（不然晕和干活来回闪）
   clearTimeout(thinkTimer)
   watchStuck()
+  if (display.stale) { show('idle', true); return }
   const ev = s.event || ''
   if (s.pose === 'oops' || (ev === 'Stop' && s.pose === 'surprised')) lastTrouble[id] = Date.now()
   else if (ev === 'Stop' && (s.pose === 'happy' || s.pose === 'proud')) lastTrouble[id] = 0  // 最后顺利完成了，不算
@@ -1507,7 +1531,7 @@ function setPluginUpdates(list) {
 }
 function aiActivity() {
   const s = charState[charId]
-  if (!s?.pose || Date.now() / 1000 - (s.ts || 0) > STUCK_AFTER / 1000) return null
+  if (!s?.pose || SessionStatus.evaluate(s, Date.now() / 1000).stale) return null
   if (pose === 'idle' || pose === 'sleeping' || pose === 'tired') return null   // 卡住的状态被兜底送回待机了
   if (s.pose === 'asking') return 'asking'
   return NOT_WORKING.has(s.pose) ? null : 'work'

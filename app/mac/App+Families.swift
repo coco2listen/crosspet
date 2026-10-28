@@ -148,10 +148,7 @@ extension App {
             // Invalid/incomplete writes keep retrying; aggregate deadlines still run every poll.
             let result = state.ingestResult(data)
             _ = stamp // Cache installation is delivered in the renderer optimization PR.
-            if family == "gpt", let snapshot = result.appliedSnapshot,
-               ["Stop", "AfterAgent", "turn/end"].contains(snapshot.event) {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refreshCodexQuota(.turnEnd) }
-            }
+
         }
         for (key, record) in state.records {
             if let pid = record.pid, pid > 1, let producer = record.producerId,
@@ -165,10 +162,7 @@ extension App {
             js("setSessions(\(quote(family)), \(text))")
         }
         let aggregate = state.aggregate()
-        if family == "gpt" {
-            codexBusyAt = state.records.values.filter { ["Thinking", "Tool Running", "Waiting Input", "Waiting Permission"].contains($0.status) }
-                .map { Date(timeIntervalSince1970: $0.observedAt) }.max()
-        }
+
         if let data = try? JSONSerialization.data(withJSONObject: aggregate.payload, options: [.sortedKeys]),
            let text = String(data: data, encoding: .utf8), text != familyPayload {
             familyPayload = text

@@ -58,3 +58,44 @@ class ClientOutputTest(unittest.TestCase):
             self.assertEqual(restored['turnId'],'t2'); self.assertGreater(restored['sequence'],first['sequence']); self.assertLess(restored['observedAt'],first['observedAt'])
             send('Stop','t2'); ended=path.read_bytes()
             send('UserPromptSubmit','t1'); self.assertEqual(path.read_bytes(),ended)
+
+    def test_same_session_and_turn_are_isolated_between_known_clients(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); data=root/'data'; state=root/'state'; data.mkdir()
+            (data/'ai-autostart-off').touch(); (data/'multi-pets-enabled').touch()
+            base=dict(os.environ, HOME=folder, USERPROFILE=folder, CROSSPET_STATE_DIR=str(state), CROSSPET_DATA_DIR=str(data))
+            for key in ('ANTHROPIC_MODEL','ANTHROPIC_BASE_URL'): base.pop(key,None)
+            def send(client,name,turn='t1'):
+                env=dict(base,CLAUDE_CODE_ENTRYPOINT='cli' if client=='tui' else 'claude-desktop')
+                result=subprocess.run([sys.executable,str(HOOK),'claude'],input=json.dumps(dict(hook_event_name=name,session_id='s1',turn_id=turn,tool_name='Read')),text=True,capture_output=True,env=env,timeout=15)
+                self.assertEqual((result.returncode,result.stdout,result.stderr),(0,'',''))
+            def snapshot(client):
+                return json.loads(next((state/'families/claude').glob('claude-code-'+client+'-*.json')).read_text())
+            send('tui','UserPromptSubmit'); send('desktop','UserPromptSubmit')
+            for _ in range(8): send('desktop','PreToolUse')
+            send('tui','Stop'); tui_end=snapshot('tui')
+            send('desktop','PreToolUse')
+            self.assertEqual(snapshot('desktop')['toolCount'],9)
+            key=json.dumps(['s1','t1'])
+            desktop_work=json.loads((state/'claude-desktop-turn-tools.json').read_text())
+            self.assertEqual(desktop_work[key]['tools'],9)
+            send('desktop','Stop'); self.assertEqual(snapshot('desktop')['pose'],'proud')
+            self.assertEqual(snapshot('tui'),tui_end)
+            self.assertTrue((state/'claude-tui-turns.json').exists())
+            self.assertTrue((state/'claude-desktop-turns.json').exists())
+            tui_counts=json.loads((state/'claude-tui-turn-tools.json').read_text())
+            desktop_counts=json.loads((state/'claude-desktop-turn-tools.json').read_text())
+            key=json.dumps(['s1','t1'])
+            self.assertEqual(tui_counts[key]['tools'],0)
+            self.assertEqual(desktop_counts[key]['tools'],0)  # Stop 清零只作用于本端。
+
+    def test_single_mode_keeps_dev_accounting_paths(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); data=root/'data'; state=root/'state'; data.mkdir(); (data/'ai-autostart-off').touch()
+            env=dict(os.environ, HOME=folder, USERPROFILE=folder,CROSSPET_STATE_DIR=str(state),CROSSPET_DATA_DIR=str(data),CLAUDE_CODE_ENTRYPOINT='cli')
+            result=subprocess.run([sys.executable,str(HOOK),'claude'],input=json.dumps(dict(hook_event_name='UserPromptSubmit',session_id='s1',turn_id='t1')),text=True,capture_output=True,env=env,timeout=15)
+            self.assertEqual((result.returncode,result.stdout,result.stderr),(0,'',''))
+            self.assertTrue((state/'claude-turns.json').exists())
+            self.assertTrue((state/'claude-turn-tools.json').exists())
+            self.assertFalse((state/'claude-tui-turns.json').exists())
+            self.assertFalse((state/'families').exists())

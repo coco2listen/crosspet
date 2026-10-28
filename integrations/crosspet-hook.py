@@ -462,6 +462,9 @@ def detect_client(host):
 
 client, client_reason = detect_client(source_host)
 received_at = time.time()
+# 多宠明确开启且来源已知时，仍复用 dev 的门禁和计数，只隔离它们的存储作用域。
+# 保留原宿主锁以保护单宠兼容文件；关闭多宠时的路径与 dev 完全相同。
+accounting_owner = source_host + "-" + client if client in ("tui", "desktop") and (app_data / "multi-pets-enabled").exists() else source_host
 
 
 # 从门禁到状态、模型路由、会话卡片写完共用一把宿主锁。只锁 turn_gate 会留下
@@ -561,7 +564,7 @@ effective_turn = turn_id
 if turn_id and turn_sid:
     is_child = bool(event.get("agent_id"))
     try:
-        allowed, effective_turn = turn_gate(source_host, turn_sid, turn_id, name, is_child)
+        allowed, effective_turn = turn_gate(accounting_owner, turn_sid, turn_id, name, is_child)
     except Exception:
         # 记账失败不能让旧事件绕过门禁去改模型路由或可见状态；下一条消息再试。
         allowed = False
@@ -795,7 +798,7 @@ def tool_failed() -> bool:
 
 # 计数跟原始宿主 + 会话 + 主轮次走，不能让另一段对话的发消息 / Stop 把它清零。
 # 没有会话 id 的旧宿主保留一份共享计数；有 id 的宿主即使不带 turn_id 也按会话分开。
-turn_file = state_dir / f"{source_host}-turn-tools.json"
+turn_file = state_dir / f"{accounting_owner}-turn-tools.json"
 turn_key = json.dumps([turn_sid, effective_turn])
 
 
@@ -821,7 +824,7 @@ def set_turn_tools(n: int) -> None:
     known = {k: v for k, v in known.items() if isinstance(v, dict) and now - float(v.get("ts", 0)) < TURN_KEEP}
     known[turn_key] = {"tools": n, "ts": now}
     known = dict(sorted(known.items(), key=lambda item: item[1].get("ts", 0))[-256:])
-    tmp = state_dir / f".{source_host}-turn-tools.{os.getpid()}.json"
+    tmp = state_dir / f".{accounting_owner}-turn-tools.{os.getpid()}.json"
     tmp.write_text(json.dumps(known))
     tmp.replace(turn_file)
 
@@ -1027,7 +1030,11 @@ def write_family_snapshot():
             except Exception:
                 previous = {}
             if previous.get("observedAt", 0) > received_at:
-                return
+                # 系统墙钟回拨后，只让已通过 dev turn gate 的明确新轮次重新建时间域。
+                # 旧工具、无轮次号 prompt 和旧轮次重复事件不能凭时间下降复活。
+                new_root = original in ("UserPromptSubmit", "BeforeAgent") and effective_turn and previous.get("turnId") and effective_turn != previous.get("turnId")
+                if not new_root:
+                    return
             # 无 turn_id 的标准钩子也不能在明确结束后把旧工具回调当新任务。
             starts = original in ("UserPromptSubmit", "BeforeAgent", "SessionStart")
             if previous.get("closed") and not starts and name != "SessionEnd":

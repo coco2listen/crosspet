@@ -21,6 +21,16 @@ async function write($: EngineInterface, file: string, data: unknown): Promise<v
 }
 const ID = 'claude'
 
+// 模型名和桌面进程存在都不能证明这是 Claude Code 桌面会话。
+export function clientOf(entry: string | undefined) {
+  if (entry === 'claude-desktop') return { client: 'desktop', clientReason: 'entrypoint:claude-desktop' }
+  if (entry === 'cli' || entry === 'sdk-cli') return { client: 'tui', clientReason: `entrypoint:${entry}` }
+  return { client: 'unknown', clientReason: 'entrypoint:unrecognized' }
+}
+async function clientMetadata($: EngineInterface) {
+  return clientOf(await $.env.get('CLAUDE_CODE_ENTRYPOINT'))
+}
+
 // 走别家的兼容接口（DeepSeek / 智谱……）时换成对应的角色演，认不出的还是 Claude。
 // 看的是模型名：每次请求前（turn.step）看这次要用的模型，回复回来再用 API 报的「实际作答的模型」校正，中途 /model 换了也跟得上。
 // 不看环境变量：CC Switch 之类会把 ANTHROPIC_BASE_URL / ANTHROPIC_MODEL 写进 settings.json，
@@ -102,13 +112,14 @@ async function setState($: EngineInterface, state: State): Promise<void> {
   let sid = ''
   try { sid = await $.session.id() } catch {}
   const who = actors.get(sid) ?? ID
-  await write($, `${who}-state.json`, state)
+  const origin = { host: ID, session: sid, ...await clientMetadata($) }
+  await write($, `${who}-state.json`, { ...state, ...origin })
   ledger($, state.event, state.tool, sid, 'shown', `${who} ${state.pose}`)   // 不等它写完：记录不该拖慢状态更新
   try {
     const file = `${await stateDir($)}/${who}-sessions.json`
     let known: Record<string, { pose: string; event: string; ts: number }> = {}
     try { known = JSON.parse(await $.fs.read(file)) } catch {}
-    known[sid] = { pose: state.pose, event: state.event, ts: state.ts }
+    known[sid] = { pose: state.pose, event: state.event, ts: state.ts, ...origin }
     const now = Date.now() / 1000
     for (const k of Object.keys(known)) if (now - known[k].ts > 600) delete known[k]
     await $.fs.write(file, JSON.stringify(known))
@@ -201,7 +212,7 @@ export const register: Register = on => {
     await setState($, { pose: 'idle', event: 'SessionStart', tool: '', ts: Date.now() / 1000 })
     const usage = await $.session.usage()
     const q = quotaOf(usage.rateLimits)
-    if (q) await write($, `${ID}-quota.json`, q)
+    if (q) await write($, `${ID}-quota.json`, { ...q, host: ID, ...await clientMetadata($) })
     return next(e)
   })
 
@@ -261,7 +272,7 @@ export const register: Register = on => {
 
   on('session.measure', async ($, e, next) => {
     const q = quotaOf(e.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })))
-    if (q) await write($, `${ID}-quota.json`, q)
+    if (q) await write($, `${ID}-quota.json`, { ...q, host: ID, ...await clientMetadata($) })
     return next(e)
   })
 }

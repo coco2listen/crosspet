@@ -414,6 +414,54 @@ name = event.get("hook_event_name") or arg_event
 source_host = character  # 不能用按模型换过的角色来分会话 / 工具计数
 
 
+def client_from_evidence(host, entrypoint, ancestors):
+    """只接收入口和可执行文件路径；不能用模型、前台应用或进程参数推测来源。"""
+    if host == "claude":
+        return {"claude-desktop": ("desktop", "entrypoint:claude-desktop"),
+                "cli": ("tui", "entrypoint:cli"), "sdk-cli": ("tui", "entrypoint:sdk-cli")}.get(
+                    entrypoint, ("unknown", "entrypoint:unrecognized"))
+    if host == "gpt":
+        # CrossPet 自己查额度时也会起 codex，不能把它当成用户的终端任务。
+        if any("/CrossPet.app/" in path or "/app-server-daemon/" in path for path in ancestors):
+            return "unknown", "ancestor:service"
+        codex = [path for path in ancestors if Path(path).name == "codex"]
+        if codex and any("/ChatGPT.app/" in path or "/Codex.app/" in path for path in ancestors):
+            return "desktop", "ancestor:desktop-codex"
+        if codex:
+            return "tui", "ancestor:codex"
+    if host == "deepseek" and any("/DeepSeek Harness.app/" in path for path in ancestors):
+        return "desktop", "ancestor:deepseek-harness"
+    return "unknown", "no-client-evidence"
+
+
+def detect_client(host):
+    entry = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "") if host == "claude" else ""
+    ancestors = []
+    if host in ("gpt", "deepseek") and sys.platform == "darwin":
+        try:
+            import subprocess
+            # comm 不含命令参数；不读取用户输入、工具参数或认证信息。
+            result = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,comm="],
+                                    capture_output=True, text=True, timeout=2)
+            table = {}
+            for line in result.stdout.splitlines():
+                fields = line.split(None, 2)
+                if len(fields) == 3:
+                    table[int(fields[0])] = (int(fields[1]), fields[2])
+            pid, visited = os.getppid(), set()
+            while pid in table and pid > 1 and pid not in visited:
+                visited.add(pid)
+                parent, executable = table[pid]
+                ancestors.append(executable)
+                pid = parent
+        except Exception:
+            pass  # 识别失败不影响原有钩子路径。
+    return client_from_evidence(host, entry, ancestors)
+
+
+client, client_reason = detect_client(source_host)
+
+
 # 从门禁到状态、模型路由、会话卡片写完共用一把宿主锁。只锁 turn_gate 会留下
 # 「工具已获准 → Stop 写完 → 旧工具才替换状态」的窗口。写完会话再关句柄；异常退出也会释放。
 def event_lock(owner: str):
@@ -846,7 +894,8 @@ elif name in ("SessionEnd",):
     pose = "sleeping"
 
 state = {"pose": pose, "event": name, "tool": tool, "ts": time.time(),
-         "host": source_host, "session": turn_sid, "turn": effective_turn}
+         "host": source_host, "session": turn_sid, "turn": effective_turn,
+         "client": client, "clientReason": client_reason}
 if pose == "thinking" and name in ("PreInvocation", "PostToolUse", "AfterTool"):
     # 快的工具（ls、读文件、grep）从开始到结束常常不到 0.3 秒，桌宠每 0.3 秒才读一次，
     # 刚写的工具动作会被「回去思考」直接盖掉（Antigravity 甚至几毫秒内就开始下一轮思考）。
@@ -925,7 +974,9 @@ session_id = str(event.get("session_id") or event.get("sessionId") or event.get(
 if session_id and (pose or name == "SessionEnd"):
     try:
         update_sessions(session_id, None if name == "SessionEnd" else
-                        {"pose": state.get("after") or pose if pose == "thinking" else pose, "event": name, "ts": time.time()})
+                        {"pose": state.get("after") or pose if pose == "thinking" else pose, "event": name, "ts": time.time(),
+                         "host": source_host, "session": session_id, "turn": effective_turn,
+                         "client": client, "clientReason": client_reason})
     except Exception:
         pass
 

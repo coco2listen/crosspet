@@ -67,7 +67,7 @@ final class FamilyState {
     let client: String?
     let staleAfter: Double
     private var state: [String: Any] = [:]
-    var scope: [String: Any] { ["family": family, "client": client as Any? ?? NSNull(), "staleAfter": staleAfter] }
+    var scope: [String: Any] { ["family": family, "client": client as Any? ?? NSNull(), "staleAfter": staleAfter, "now": Date().timeIntervalSince1970] }
     var records: [String: FamilySnapshot] {
         guard let value = state["records"], let data = try? JSONSerialization.data(withJSONObject: value) else { return [:] }
         return (try? JSONDecoder().decode([String: FamilySnapshot].self, from: data)) ?? [:]

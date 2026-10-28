@@ -28,6 +28,9 @@ enum SharedPreferences {
     static func migratePet(_ pet: UserDefaults, family: String, shared: UserDefaults) {
         guard pet.integer(forKey: "clientSettingsSchema") < 1 else { return }
         // Preserve explicit false and original outfit (empty string); retain every legacy key.
+        var backup: [String: Any] = [:]
+        for key in ["size", "outfitV1", "skins", "enabled", "origin", "dock"] { if let value = pet.object(forKey: key) { backup[key] = value } }
+        pet.set(backup, forKey: "clientSettingsBackupV1")
         var sources: [String: String] = [:]
         if pet.object(forKey: "size") == nil {
             pet.set(shared.object(forKey: "size") ?? 1.0, forKey: "size"); sources["size"] = "shared"
@@ -38,6 +41,7 @@ enum SharedPreferences {
             pet.set(legacy[family] ?? current[family] ?? "", forKey: "outfitV1")
             sources["outfitV1"] = legacy[family] != nil ? "legacy-pet" : "shared"
         } else { sources["outfitV1"] = "pet" }
+        if pet.object(forKey: "appearanceMode") == nil, let mode = shared.string(forKey: "appearanceMode") { pet.set(mode, forKey: "appearanceMode") }
         pet.set(sources, forKey: "clientSettingsSourcesV1")
         pet.set(1, forKey: "clientSettingsSchema")
     }

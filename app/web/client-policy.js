@@ -30,6 +30,7 @@
       typeof s.sessionId === 'string' && s.sessionId.length > 0 && typeof s.model === 'string' &&
       has(priority, s.status) && typeof s.pose === 'string' && typeof s.event === 'string' &&
       finiteTime(s.ts) && finiteTime(s.observedAt) &&
+      (scope.now === undefined || (finiteTime(scope.now) && s.ts <= scope.now && s.observedAt <= scope.now)) &&
       (s.sequence === undefined || (Number.isSafeInteger(s.sequence) && s.sequence >= 0)) &&
       (s.producerId === undefined || typeof s.producerId === 'string') &&
       (s.turnId === undefined || typeof s.turnId === 'string') &&
@@ -52,6 +53,10 @@
     return out
   }
 
+  const channelOf = s => s.producerId === 'hook' ? 'hook' : typeof s.producerId === 'string' && s.producerId.startsWith('claude-mod-') ? 'mod' : 'plugin'
+  const turnToken = s => s.turnId ? JSON.stringify([s.producerId || '', s.turnId]) : null
+  const followsVisible = (next, previous) => next.observedAt > previous.observedAt || (next.observedAt === previous.observedAt && next.ts >= previous.ts)
+
   function ingest(previous, snapshot, scope) {
     const state = object(previous) ? previous : {}
     if (!valid(snapshot, scope)) return { state, result: 'invalid' }
@@ -66,22 +71,61 @@
     }
     const updated = { ...state, records, unknown, known, closed }
     if (scope.client != null && next.client !== scope.client) return { state: updated, result: 'ignored' }
-    const before = records[key]
-    if (before && !follows(next, before)) return { state: updated, result: 'ignored' }
-    // A new producer has a fresh sequence domain, but a delayed old producer must not take over.
-    if (before && next.producerId !== before.producerId) {
-      const retired = state.retired || {}
-      if ((retired[key] || []).includes(next.producerId)) return { state: updated, result: 'ignored' }
-      updated.retired = { ...retired, [key]: [...(retired[key] || []), before.producerId].filter(x => x != null) }
-      delete closed[key]
-    } else if (state.retired) updated.retired = state.retired
-    if (next.turnId && (closed[key] || []).includes(next.turnId) && next.status !== 'Offline') return { state: updated, result: 'ignored' }
-    if (before && before.producerId === next.producerId && before.turnId && next.turnId && before.turnId !== next.turnId && !(closed[key] || []).includes(before.turnId)) {
-      closed[key] = [...(closed[key] || []), before.turnId]
+    // Hooks and the mod are concurrent observers, not successive incarnations of one
+    // process. Keep ordering/restart evidence per channel while exposing one session.
+    const channel = channelOf(next), channelKey = JSON.stringify([key, channel])
+    const channels = { ...(state.channels || {}) }, starts = { ...(state.starts || {}) }
+    const epochs = { ...(state.epochs || {}) }, endedAt = { ...(state.endedAt || {}) }
+    const retired = { ...(state.retired || {}) }, domains = { ...(state.domains || {}) }, channelDomains = { ...(state.channelDomains || {}) }
+    Object.assign(updated, { channels, starts, epochs, endedAt, retired, domains, channelDomains })
+    const before = channels[channelKey]
+    const prompt = ['UserPromptSubmit', 'BeforeAgent', 'turn/start'].includes(next.event)
+    const newTurn = before && before.turnId && next.turnId && next.turnId !== before.turnId
+    // Sequence counters survive wall-clock corrections. Only a provably newer
+    // prompt/turn can establish a corrected time domain; old work cannot do it.
+    const newerSequence = before && next.producerId === before.producerId && Number.isSafeInteger(next.sequence) && Number.isSafeInteger(before.sequence) && next.sequence > before.sequence
+    const recovery = newerSequence && !terminal(next) && (prompt || newTurn) && (next.ts < before.ts || next.observedAt < before.observedAt)
+    if (before && !follows(next, before) && !recovery) return { state: updated, result: 'ignored' }
+    if ((retired[channelKey] || []).includes(next.producerId)) return { state: updated, result: 'ignored' }
+    const restart = before && next.producerId !== before.producerId
+    if (restart) retired[channelKey] = [...(retired[channelKey] || []), before.producerId].filter(x => x != null)
+    const token = turnToken(next)
+    if (token && (closed[channelKey] || []).includes(token) && next.status !== 'Offline') return { state: updated, result: 'ignored' }
+    const changed = before && !restart && before.turnId && next.turnId && before.turnId !== next.turnId
+    const begins = prompt || changed || (restart && channel === 'plugin')
+    if (changed) {
+      const previousToken = turnToken(before)
+      if (previousToken && !(closed[channelKey] || []).includes(previousToken)) closed[channelKey] = [...(closed[channelKey] || []), previousToken]
     }
+    let recoveredDomain = false
+    if (recovery && (channelDomains[channelKey] || 0) >= (domains[key] || 0)) {
+      domains[key] = (domains[key] || 0) + 1
+      epochs[key] = next.observedAt
+      delete endedAt[key]
+      recoveredDomain = true
+    }
+    // Other channels keep their old domain until they supply their own fresh
+    // boundary. Their old high wall-clock values cannot override recovered work.
+    if ((channelDomains[channelKey] || 0) < (domains[key] || 0) && !begins) return { state: updated, result: 'ignored' }
+    const channelWasCurrent = (channelDomains[channelKey] || 0) >= (domains[key] || 0)
+    if (begins || !(channelKey in channelDomains)) channelDomains[channelKey] = domains[key] || 0
+    const ownStart = begins || !before ? next.observedAt : starts[channelKey]
+    // A second observer's prompt joins the current epoch. A channel that already
+    // joined it can begin the next one. Turn IDs remain local to their producer.
+    if (!epochs[key] || (begins && before && channelWasCurrent && (starts[channelKey] || 0) >= epochs[key])) epochs[key] = next.observedAt
+    channels[channelKey] = next
+    // First seeing a worker after another observer ended is not a new-turn proof.
+    // Keep it behind the end boundary until its own prompt/turn transition arrives.
+    starts[channelKey] = !before && !begins && !terminal(next) && endedAt[key]
+      ? Math.min(ownStart, endedAt[key]) : ownStart
+    // Remember the other observer's terminal evidence even if its old work arrives
+    // later. Only a proven fresh prompt/turn can open work after that boundary.
+    if (terminal(next) && token && !(closed[channelKey] || []).includes(token)) closed[channelKey] = [...(closed[channelKey] || []), token]
+    if (ownStart < (epochs[key] || 0) || (!begins && !terminal(next) && !before && endedAt[key]) || (!begins && next.status !== 'Offline' && ownStart <= (endedAt[key] || 0))) return { state: updated, result: 'ignored' }
+    if (terminal(next)) endedAt[key] = Math.max(endedAt[key] || 0, next.observedAt)
+    const visibleBefore = records[key]
+    if (visibleBefore && !recoveredDomain && !recovery && !followsVisible(next, visibleBefore)) return { state: updated, result: 'ignored' }
     records[key] = next
-    // Do not discard closed-turn evidence: a long-lived session may receive an arbitrarily late event.
-    if (next.turnId && terminal(next) && !(closed[key] || []).includes(next.turnId)) closed[key] = [...(closed[key] || []), next.turnId]
     return { state: updated, result: 'applied', snapshot: next }
   }
 
@@ -140,9 +184,9 @@
   function processExited(state, key, producerId, now) {
     const previous = (state || {}).records && state.records[key]
     if (!previous || previous.producerId !== producerId || !previous.pid || previous.status === 'Offline' || !finiteTime(now) || now < previous.observedAt) return state
-    const closed = { ...(state.closed || {}) }
-    if (previous.turnId && !(closed[key] || []).includes(previous.turnId)) closed[key] = [...(closed[key] || []), previous.turnId]
-    return { ...state, closed, records: { ...state.records, [key]: { ...previous, status: 'Offline', pose: 'sleeping', event: 'ProcessExit', ts: now, observedAt: now } } }
+    const closed = { ...(state.closed || {}) }, channelKey = JSON.stringify([key, channelOf(previous)]), token = turnToken(previous)
+    if (token && !(closed[channelKey] || []).includes(token)) closed[channelKey] = [...(closed[channelKey] || []), token]
+    return { ...state, closed, endedAt: { ...(state.endedAt || {}), [key]: now }, records: { ...state.records, [key]: { ...previous, status: 'Offline', pose: 'sleeping', event: 'ProcessExit', ts: now, observedAt: now } } }
   }
 
   function hosts(processes) {

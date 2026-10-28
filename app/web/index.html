@@ -99,6 +99,9 @@ html.tucked-art #body { animation: none !important; transform: none !important; 
   color: #6b4a3a; font-size: calc(11px * var(--k)); min-height: calc(14px * var(--k)); }
 #caption:empty { visibility: hidden; }
 html.no-name #caption { display: none; }
+html.family-mode #foot { min-height: calc(80px * max(1, var(--k))); }
+html.tucked #familyStatus { display: none; }
+#familyStatus { margin-top: calc(2px * var(--k)); padding: calc(1px * var(--k)) calc(8px * var(--k)); border-radius: calc(7px * var(--k)); font: calc(10px * var(--k)) system-ui; color: #6b4a3a; background: rgba(255,255,255,.85); pointer-events: none; }
 #quota { max-width: calc(236px * var(--k)); text-align: center; line-height: 1.35; margin-top: calc(2px * var(--k)); padding: calc(1px * var(--k)) calc(8px * var(--k));
   border-radius: calc(7px * var(--k)); background: rgba(255,255,255,.8); color: #6b4a3a; font-size: calc(10px * var(--k)); }
 #quota:empty { display: none; }
@@ -226,6 +229,7 @@ addEventListener('error', e => {
 <script src="stand-in.js"></script>
 <script src="follow-policy.js"></script>
 <script src="session-status.js"></script>
+<script src="client-policy.js"></script>
 <script src="codex-resets.js"></script>
 <script src="whats-new.js"></script>
 <script src="peak-hours.js"></script>
@@ -372,6 +376,7 @@ function setShowName(on) { document.documentElement.classList.toggle('no-name', 
 // 把画布尺寸交回外壳去设窗口（窗口 = 画布 × 人物大小）。规则在 text-size.js；锁着时 k = 1，和以前一样
 function setSizes(size, textSize, linked) {
   const L = TextSize.layout(size, TextSize.effectiveText(size, textSize, linked))
+  if (familyMode) { const extra = Math.ceil(18 * Math.max(1, L.k)); L.h += extra; L.foot += extra }
   document.documentElement.style.setProperty('--k', String(L.k))
   return JSON.stringify({ w: L.w, h: L.h, foot: L.foot })
 }
@@ -389,7 +394,7 @@ function hitRects() {
     const b = shownRect()
     return JSON.stringify(b ? [[b.left - 4, b.top - 4, b.width + 8, b.height + 8].map(Math.round)] : [])
   }
-  for (const id of ['body', 'bubble', 'caption', 'sessionStatus', 'quota', 'newsCard']) {
+  for (const id of ['body', 'bubble', 'caption', 'sessionStatus', 'familyStatus', 'quota', 'newsCard']) {
     const el = $(id)
     if (!el || (id === 'bubble' && el.classList.contains('hide')) || el.classList.contains('hidden')) continue
     const cs = getComputedStyle(el)
@@ -434,15 +439,27 @@ function say(line) {
 const RESETS_URL = 'https://codex-resets.com/api/v1/status'
 let resetsOn = false, resetsData = null, resetsAt = 0, resetsTimer = null, codexResetSeenAt = 0, resetsWaiting = false
 let devResetsSaved = null   // 开发者控制台预演中：预演前的真实开关（见 devResetsPlay）
-function setCodexResets(on) {
+let resetsShared = false, sharedResetWaiters = []
+function setCodexResets(on, shared = false) {
+  resetsShared = shared
+  if (resetsOn === !!on && shared) return
   resetsOn = !!on
   clearTimeout(resetsTimer)
-  if (!resetsOn) { resetsData = null; resetsAt = 0; renderQuota(); return }
-  pollResets()
+  if (!resetsOn) { for (const done of sharedResetWaiters.splice(0)) done({ok:false,wait:600000}); resetsData = null; resetsAt = 0; renderQuota(); return }
+  if (!resetsShared) pollResets()
 }
 // 查一次：成功更新 resetsData。返回 { ok: 这次查到了没有, wait: 下次多久后再查（毫秒）}。
 // 失败时保留上次查到的（额度下方那一行、主动提醒照用：官方宣布不会因为断网就失效），但问她时照实说连不上
+function sharedResetResult(raw, ok, wait) {
+  const d = raw && CodexResets.parse(raw)
+  if (resetsOn && !devResetsSaved && d) { resetsData = d; resetsAt = Date.now(); renderQuota(); announceReset() }
+  for (const done of sharedResetWaiters.splice(0)) done({ok: !!ok && !!d, wait})
+}
 async function fetchResets() {
+  if (resetsShared) return new Promise(resolve => {
+    sharedResetWaiters.push(resolve)
+    window.webkit.messageHandlers.pet.postMessage({resetRequest: true})
+  })
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 10000)
   const fail = { ok: false, wait: 10 * 60 * 1000 }
   try {
@@ -495,7 +512,7 @@ async function askReset() {
   if (!devResetsSaved) {   // 开发者控制台预演：用它给的假数据，不联网
     const r = await fetchResets()
     ok = r.ok
-    if (resetsOn) { clearTimeout(resetsTimer); resetsTimer = setTimeout(pollResets, r.wait); renderQuota() }   // 问的途中关了开关：不再续上定时
+    if (resetsOn) { clearTimeout(resetsTimer); if (!resetsShared) resetsTimer = setTimeout(pollResets, r.wait); renderQuota() }   // 问的途中关了开关：不再续上定时
   }
   await new Promise(r => setTimeout(r, Math.max(0, 1200 - (Date.now() - started))))   // 至少想 1.2 秒：一下子就查完、或一下子就连不上时也看得见她在想
   if (charId === 'gpt' && generation === characterGeneration && !egg && !characterTimer) tellReset(ok ? resetsData : null)
@@ -531,7 +548,7 @@ function devResetsPlay(data) {
 function devResetsDone() {
   if (!devResetsSaved) return
   const was = devResetsSaved.on; devResetsSaved = null
-  resetsOn = false; setCodexResets(was)
+  resetsOn = false; setCodexResets(was, resetsShared)
 }
 // 额度下方那一行（只在官方宣布、还没执行时有）
 function appendResetNotice(el) {
@@ -604,8 +621,8 @@ const peakPend = {}   // 忙着没换成的：{ 角色: { key, skin: 挂起时�
 function peakApplied(id, key) {
   if (devPeakApplied) { if (key !== undefined) devPeakApplied[id] = key; return devPeakApplied[id] ?? null }   // 开发者控制台演的记在内存里，不动真的记号
   let m = {}
-  try { m = JSON.parse(localStorage.getItem('crosspet-peak-applied')) || {} } catch {}
-  if (key !== undefined) { m[id] = key; try { localStorage.setItem('crosspet-peak-applied', JSON.stringify(m)) } catch {} }
+  try { m = JSON.parse(localStorage.getItem((familyClient ? `crosspet-peak-applied:${familyMode}:${familyClient}` : 'crosspet-peak-applied'))) || {} } catch {}
+  if (key !== undefined) { m[id] = key; try { localStorage.setItem((familyClient ? `crosspet-peak-applied:${familyMode}:${familyClient}` : 'crosspet-peak-applied'), JSON.stringify(m)) } catch {} }
   return m[id] ?? null
 }
 // 外壳在网页加载完、设置变化时调。改设置不马上换：先把每个角色记成「这一段已经处理过」，等下一段
@@ -623,7 +640,7 @@ function checkPeakOutfits(startup) {
   if (!peakSkins || !window.PeakHours) return
   for (const [id, rule] of Object.entries(PeakHours.RULES)) {
     const c = manifest.characters[id]
-    if (!c) continue
+    if (!c || (familyMode && id !== familyMode)) continue
     const d = PeakHours.decide(rule, peakNow(), peakSkins[id], peakApplied(id))
     if (d.skin === null) { if (d.key !== peakApplied(id)) peakApplied(id, d.key); continue }   // 这一段没设要穿什么
     if ((c.skin || '') === d.skin) { peakApplied(id, d.key); continue }   // 已经穿着了
@@ -670,7 +687,8 @@ function renderQuota() {
   if (quotaAggregate || reactTo) {
     let ids = Object.keys(manifest?.characters || {}).filter(id => !manifest.characters[id].egg)
     if (!quotaAggregate) ids = StandIn.quotaIds(reactTo, charId, ids)
-    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => manifest?.characters?.[id]?.name || id), undefined, quotaStyle)
+    if (familyClient) ids = Object.keys(quota).filter(id => id === familyMode || id.includes('-'))
+    QuotaAggregate.render(el, QuotaAggregate.rows(quota, charId, ids, id => id === 'claude-tui' ? '终端 Claude' : id === 'claude-desktop' ? '桌面 Claude' : manifest?.characters?.[id]?.name || id), undefined, quotaStyle)
     appendResetNotice(el)
     appendPeakBar(el)
     return
@@ -736,7 +754,7 @@ function init(m) {
   // 正在换角色、要换上的那个还在新清单里：让它换完（换衣服时外壳会重新 init）
   if (characterTarget && manifest.characters[characterTarget]) return
   if (characterTarget) { ++characterGeneration; clearTimeout(characterTimer); characterTimer = null; characterTarget = null; $('stage').classList.remove('swap') }
-  if (!charId || !manifest.characters[charId]) setCharacter(Object.keys(m.characters).sort().find(k => !m.characters[k].egg), true)
+  if (!charId || !manifest.characters[charId]) setCharacter(familyMode || Object.keys(m.characters).sort().find(k => !m.characters[k].egg), true)
   else { $('caption').textContent = char().name }
 }
 
@@ -750,6 +768,7 @@ function greetDue(id) {
 }
 
 function setCharacter(id, quiet) {
+  if (familyMode && id !== familyMode) return
   if (egg) { clearEggTimers(); egg = null; charId = null }
   if (!manifest.characters[id] || manifest.characters[id].egg || id === characterTarget) return
   if (id === charId && !characterTimer) return
@@ -786,7 +805,7 @@ function setCharacter(id, quiet) {
     setBlinkSrc(c.blink)
     $('caption').textContent = c.name
     const s = charState[id]
-    const busy = s && Date.now() / 1000 - s.ts < 60 && !TRANSIENT[s.pose] && s.pose !== 'idle'
+    const busy = s && (familyMode ? aiActivity() !== null : Date.now() / 1000 - s.ts < 60) && !TRANSIENT[s.pose] && s.pose !== 'idle'
     setPose(busy ? s.pose : restPose(), true)
     if (s) watchStuck()   // 继续按原事件时间确认，不因切换角色重置沉默门槛
     else if ($('sessionStatus')) $('sessionStatus').textContent = ''
@@ -1054,6 +1073,7 @@ function setSessionStatus(snapshot) {
 }
 function watchStuck() {
   clearTimeout(stuckTimer)
+  if (familyMode) return
   const state = charState[charId]
   if (!state) return
   const status = setSessionStatus(state)
@@ -1140,10 +1160,20 @@ let multi = null             // 正在演：{ side, flipTimer, cards: Map(会话
 
 function setSessions(id, map) {
   if (id === 'current') id = charId
-  sessions[id] = map || {}
+  if (familyMode && id !== familyMode) return
+  sessions[id] = familyClient ? Object.fromEntries(Object.entries(map || {}).filter(([, state]) => state.client === familyClient)) : map || {}
   refreshMulti()
 }
 function sessionKind(e, now) {
+  if (familyMode && e.status) {
+    if (e.status === 'Offline' && e.lastResult && now - e.lastResult.ts < SESSION_DONE_SHOW) return e.lastResult.status === 'Success' ? 'done' : 'error'
+    if (e.status === 'Offline' || e.status === 'Idle') return null
+    if (e.status === 'Waiting Permission' || e.status === 'Waiting Input') return 'ask'
+    if (e.status === 'Success') return now - Number(e.ts || 0) < SESSION_DONE_SHOW ? 'done' : null
+    if (e.status === 'Error' && ['Stop', 'StopFailure', 'AfterAgent', 'turn/end'].includes(e.event)) return now - Number(e.ts || 0) < SESSION_DONE_SHOW ? 'error' : null
+    if (e.status === 'Unknown') return 'uncertain'
+    return 'work'
+  }
   const age = Math.max(0, now - Number(e.ts || 0))
   if (SessionStatus.evaluate(e, now).stale) return 'uncertain'
   if (e.pose === 'asking') return age < 600 ? 'ask' : null
@@ -1298,7 +1328,39 @@ function diagnoseDisplay() {
     imageErrors: imageErrors.slice(), verdicts: petVerdicts.slice(),
   }
 }
+// Fixed-source mode uses the same animation engine and all existing character assets.
+let familyMode = null, familyClient = null, seenFamilyResult = 0
+function setFamilyMode(id, client = null) { familyMode = id; familyClient = typeof client === 'string' && client !== 'unknown' ? client : null; document.documentElement.classList.toggle('family-mode', !!id); clearTimeout(stuckTimer) }
+// Do not label a shared legacy balance as either client's account.
+function setClientQuota(id, client, envelope) {
+  if (!familyClient || (typeof client !== 'string' || client === 'unknown')) return
+  const key = familyMode === id && familyClient === client ? id : `${id}-${client}`
+  const valid = envelope?.schema === 1 && envelope.family === id && envelope.source === ({claude:'claude-code',gpt:'codex',deepseek:'deepseek-harness'}[id]) && envelope.client === client
+  const q = valid && envelope.quota && typeof envelope.quota.text === 'string' && envelope.quota.text.trim() ? envelope.quota : null
+  setQuota(key, q || {text: `${client === 'tui' ? '终端' : '桌面'}额度待更新`, low: false, unavailable: true})
+}
+function applyFamilyState(id, state) {
+  if (id !== familyMode || (familyClient && state.client !== familyClient && !(state.event === 'NoSessions' && !state.client))) return
+  const badge = $('familyStatus') || Object.assign(document.createElement('div'), {id: 'familyStatus'})
+  if (!badge.parentNode) {
+    $('foot').insertBefore(badge, $('quota'))
+  }
+  badge.textContent = state.event === 'NoSessions' ? '等待会话事件' : state.stale && state.status === 'Unknown' ? '状态待确认' : ({Thinking:'思考中','Tool Running':'执行工具','Waiting Input':'等待输入','Waiting Permission':'等待授权',Success:'已完成',Error:'发生错误',Idle:'空闲',Offline:'会话已结束'}[state.status] || state.status) + (state.stale ? ' · 状态待确认' : '')
+  if (familyClient) badge.textContent = `${familyClient === 'tui' ? '终端' : '桌面'} · ${badge.textContent}`
+  if (state.unattributed) badge.textContent += ` · ${state.unattributed} 个会话来源未识别`
+  badge.title = [state.source, familyClient || state.client, state.model].filter(Boolean).join(' / ')
+  applyCharState(id, state)
+  const result = state.lastResult
+  // A short-lived Stop can be followed by SessionEnd before the next native poll.
+  // Animate its explicit result while the badge continues to show the current lifecycle state.
+  if (result && result.ts > seenFamilyResult && Date.now() / 1000 - result.ts < 10) {
+    seenFamilyResult = result.ts
+    if (state.status === 'Offline' || state.status === 'Idle') show(result.pose)
+  }
+}
+
 function applyCharState(id, s) {
+  if (familyMode && id !== familyMode) return
   if (id === 'current') id = charId   // 多模型宿主里没有对应角色的模型（WorkBuddy 的混元、Kimi……）：由当前角色来演
   const own = id                      // 事件原本属于哪家 AI：先按它记下状态，切回那家的角色时看到的才是最新的
   charState[own] = s
@@ -1362,8 +1424,8 @@ const CELEBRATE = { reset: ['reset', 'happy'], feast: ['feast', 'eat'] }
 const pendingCelebration = {}
 function quotaMemory(update) {
   let m = {}
-  try { m = JSON.parse(localStorage.getItem('crosspet-quota-memory')) || {} } catch {}
-  if (update) { update(m); try { localStorage.setItem('crosspet-quota-memory', JSON.stringify(m)) } catch {} }
+  try { m = JSON.parse(localStorage.getItem(familyClient ? `crosspet-quota-memory:${familyMode}:${familyClient}` : 'crosspet-quota-memory')) || {} } catch {}
+  if (update) { update(m); try { localStorage.setItem(familyClient ? `crosspet-quota-memory:${familyMode}:${familyClient}` : 'crosspet-quota-memory', JSON.stringify(m)) } catch {} }
   return m
 }
 // 多少算「充值了」：人民币 0.5，美元按差不多的钱算 0.07
@@ -1373,7 +1435,7 @@ function feastByCurrency(prev, now) {
   return Object.entries(now).some(([c, v]) => typeof v === 'number' && v - (Number(prev[c]) || 0) >= (FEAST_STEP[c] ?? 0.5))
 }
 function quotaEvent(id, q) {
-  if (!q) return null
+  if (!q || (familyMode && id !== familyMode)) return null
   let ev = null
   quotaMemory(m => {
     const prev = m[id] || {}, now = Date.now() / 1000
@@ -1531,6 +1593,11 @@ function setPluginUpdates(list) {
 }
 function aiActivity() {
   const s = charState[charId]
+  if (familyMode && s?.status) {
+    if (s.status === 'Waiting Input' || s.status === 'Waiting Permission') return 'asking'
+    if (s.status === 'Thinking' || s.status === 'Tool Running' || (s.status === 'Error' && !['Stop', 'StopFailure', 'AfterAgent', 'turn/end'].includes(s.event))) return 'work'
+    return null
+  }
   if (!s?.pose || SessionStatus.evaluate(s, Date.now() / 1000).stale) return null
   if (pose === 'idle' || pose === 'sleeping' || pose === 'tired') return null   // 卡住的状态被兜底送回待机了
   if (s.pose === 'asking') return 'asking'
@@ -1595,6 +1662,7 @@ function devShow(id, p, line, frameUrl, holdMs = 10 * 60 * 1000) {
   say(line || '')
 }
 function devRelease() {
+  if (familyMode && charId !== familyMode) setCharacter(familyMode, true)
   devHoldUntil = 0; devActive = false
   if (egg) return
   const c = manifest?.characters?.[charId]

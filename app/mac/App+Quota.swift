@@ -12,7 +12,7 @@ extension App {
     func refreshCodexQuota(_ why: CodexWhy) {
         if owner !== self { owner.refreshCodexQuota(why); return }
         guard !familiesMode, activePets.contains(where: { $0.ready }), defaults.bool(forKey: "gptQuota"), !codexInFlight else { return }
-        if why == .now, let payload = codexPayload { allPets.forEach { $0.js("setCodexQuota(\(payload))") } }
+        if why == .now, let payload = codexPayload { allPets.filter { $0.family == nil }.forEach { $0.js("setCodexQuota(\(payload))") } }
         codexBusyAt = activePets.compactMap { $0.codexBusyAt }.max()
         if why == .tick && (screensAsleep || userHidden) { return }
         let since = Date().timeIntervalSince(codexLiveAt)
@@ -25,10 +25,12 @@ extension App {
         if !askLive { return }
         codexLiveAt = Date()
         codexInFlight = true
+        let generation = quotaGeneration
         // 找程序可能要起一次登录 shell，放到后台，别卡住桌宠。程序被更新挪走的话 findBinary 下次会发现路径不在、重新找
         DispatchQueue.global(qos: .utility).async {
             let finish = { (rl: [String: Any]?, err: String?, ms: Int) in
                 DispatchQueue.main.async {
+                    guard self.quotaGeneration == generation, !self.familiesMode else { return }
                     self.codexInFlight = false
                     self.applyCodex(rateLimits: rl, error: err, ms: ms)
                 }
@@ -48,19 +50,19 @@ extension App {
 
     /// 交给网页：问到了就是 live；没问到、但以前问到过，就接着显示最后一次的数（stale，网页标上是几点的数据）；从没问到过就不显示
     func applyCodex(rateLimits: [String: Any]?, error: String?, ms: Int) {
-        guard defaults.bool(forKey: "gptQuota") else { return }   // 查的途中关掉了额度显示
+        guard !familiesMode, defaults.bool(forKey: "gptQuota") else { return }   // 查的途中关掉了额度显示
         if let rl = rateLimits { codexLast = (rl, Date()); codexNote = "" }
         else if codexLast == nil { codexNote = "问不到 Codex：\(error ?? "原因不明")" }
         if rateLimits == nil { appLog("GPT 额度查询失败：\(error ?? "原因不明")") }
         let tag = rateLimits != nil ? "Codex 服务，\(String(format: "%.1f", Double(ms) / 1000)) 秒" : "没问到：\(error ?? "原因不明")"
         lastGptQuota = "\(Self.clock()) （\(tag)）" + (codexLast.map { (rateLimits == nil ? "沿用 \(Self.hm($0.at)) 的数：" : "") + CodexQuotaSource.brief($0.rateLimits) } ?? "")
         pushSettings()
-        guard let last = codexLast else { allPets.forEach { $0.js("setCodexQuota(null)") }; return }
+        guard let last = codexLast else { allPets.filter { $0.family == nil }.forEach { $0.js("setCodexQuota(null)") }; return }
         var p = CodexQuotaSource.payload(source: rateLimits != nil ? "live" : "stale", rateLimits: last.rateLimits, error: error, ms: ms)
         p["at"] = last.at.timeIntervalSince1970
         guard let d = try? JSONSerialization.data(withJSONObject: p), let arg = String(data: d, encoding: .utf8) else { return }
         codexPayload = arg
-        allPets.forEach { $0.js("setCodexQuota(\(arg))") }
+        allPets.filter { $0.family == nil }.forEach { $0.js("setCodexQuota(\(arg))") }
     }
 
     // MARK: Gemini 额度（可选，默认关）
@@ -70,15 +72,15 @@ extension App {
 
     func refreshAntigravityQuota() {
         if owner !== self { owner.refreshAntigravityQuota(); return }
-        guard activePets.contains(where: { $0.ready }), defaults.bool(forKey: "agyQuota"), !agyInFlight else { return }
-        if let payload = agyPayload { allPets.forEach { $0.js("setQuota('gemini', \(payload))") } }
+        guard !familiesMode, activePets.contains(where: { $0.ready }), defaults.bool(forKey: "agyQuota"), !agyInFlight else { return }
+        if let payload = agyPayload { allPets.filter { $0.family == nil }.forEach { $0.js("setQuota('gemini', \(payload))") } }
         guard Date().timeIntervalSince(agyLiveAt) >= 20 else { return }
         agyLiveAt = Date()
         agyInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             guard let (pid, token) = self.antigravityServer() else {
-                DispatchQueue.main.async { self.agyInFlight = false; self.lastAgyNote = "没找到 Antigravity 的服务进程"; self.allPets.forEach { $0.js("setQuota('gemini', null)") } }
+                DispatchQueue.main.async { self.agyInFlight = false; self.lastAgyNote = "没找到 Antigravity 的服务进程"; self.allPets.filter { $0.family == nil }.forEach { $0.js("setQuota('gemini', null)") } }
                 return
             }
             let ports = self.agyPort?.pid == pid ? [self.agyPort!.port] : self.listeningPorts(pid)
@@ -144,7 +146,7 @@ extension App {
             }
             self.agyPort = (pid, port)
             guard let json = try? JSONSerialization.data(withJSONObject: q), let arg = String(data: json, encoding: .utf8) else { return }
-            DispatchQueue.main.async { self.agyInFlight = false; self.agyPayload = arg; if self.defaults.bool(forKey: "agyQuota") { self.allPets.forEach { $0.js("setQuota('gemini', \(arg))") } } }
+            DispatchQueue.main.async { self.agyInFlight = false; self.agyPayload = arg; if self.defaults.bool(forKey: "agyQuota") { self.allPets.filter { $0.family == nil }.forEach { $0.js("setQuota('gemini', \(arg))") } } }
         }.resume()
     }
 

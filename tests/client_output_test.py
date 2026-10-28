@@ -40,3 +40,21 @@ class ClientOutputTest(unittest.TestCase):
                 path=next((root/'state/families/claude').glob('*.json'))
                 if name=='Stop': ended=path.read_bytes()
                 if name=='PreToolUse': self.assertEqual(path.read_bytes(),ended)
+
+    def test_wall_clock_rollback_recovers_only_for_proven_new_root(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); data=root/'data'; data.mkdir(); (data/'ai-autostart-off').touch(); (data/'multi-pets-enabled').touch()
+            env=dict(os.environ, HOME=folder, USERPROFILE=folder, CROSSPET_STATE_DIR=str(root/'state'), CROSSPET_DATA_DIR=str(data), CLAUDE_CODE_ENTRYPOINT='cli')
+            for key in ('ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'): env.pop(key, None)
+            def send(name, turn):
+                result=subprocess.run([sys.executable,str(HOOK),'claude'],input=json.dumps(dict(hook_event_name=name,session_id='s1',turn_id=turn,tool_name='Read')),text=True,capture_output=True,env=env,timeout=15)
+                self.assertEqual((result.returncode,result.stdout,result.stderr),(0,'',''))
+            send('UserPromptSubmit','t1')
+            path=next((root/'state/families/claude').glob('*.json'))
+            first=json.loads(path.read_text()); first['observedAt']+=3600; first['ts']+=3600
+            path.write_text(json.dumps(first)); future=path.read_bytes()
+            send('PreToolUse','t1'); self.assertEqual(path.read_bytes(),future)
+            send('UserPromptSubmit','t2'); restored=json.loads(path.read_text())
+            self.assertEqual(restored['turnId'],'t2'); self.assertGreater(restored['sequence'],first['sequence']); self.assertLess(restored['observedAt'],first['observedAt'])
+            send('Stop','t2'); ended=path.read_bytes()
+            send('UserPromptSubmit','t1'); self.assertEqual(path.read_bytes(),ended)

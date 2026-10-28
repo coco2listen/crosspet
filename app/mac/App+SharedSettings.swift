@@ -28,7 +28,7 @@ extension App {
             case "quotaStyle": pet.js("setQuotaStyle(\(pet.quote(pet.quotaStyle)))")
             case "peakStyle": pet.js("setPeakStyle(\(pet.quote(pet.peakStyle)))")
             case "peakSkins": pet.js("setPeakSkins(\(pet.peakSkinsJSON))")
-            case "gptQuota": if !defaults.bool(forKey: "gptQuota") { pet.js("setCodexQuota(null)") }
+            case "gptQuota": if !defaults.bool(forKey: "gptQuota") { pet.js("setCodexQuota(null)") } else if let family = pet.family, let client = pet.client { pet.clientQuotaPayloads = [:]; pet.pollClientQuota(family, client) }
             case "agyQuota": if !defaults.bool(forKey: "agyQuota") { pet.js("setQuota('gemini', null)") }
             default: break
             }

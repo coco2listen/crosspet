@@ -28,7 +28,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         self.family = family
         self.client = client
         self.petId = family.map { petId ?? $0 }
-        if appPreferences.string(forKey: "petMode") != nil { SharedPreferences.migrate(domain: preferenceDomain, shared: appPreferences) }
+        if ["clients", "families"].contains(appPreferences.string(forKey: "petMode") ?? "") { SharedPreferences.migrate(domain: preferenceDomain, shared: appPreferences) }
         defaults = appPreferences
         windowDefaults = self.petId.flatMap { UserDefaults(suiteName: "\(preferenceDomain).pet.\($0)") } ?? appPreferences
         if let family {
@@ -92,6 +92,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     // GPT 额度 用的
     var codexLiveAt = Date.distantPast       // 上次问服务的时间（不管成没成）
     var codexBusyAt: Date?   // Codex 最近一次干活的事件（不是 Stop）；Stop 后清掉。干活时额度查得勤一点
+    var quotaGeneration = 0
     var codexInFlight = false
     var codexLast: (rateLimits: [String: Any], at: Date)?   // 最后一次问到的额度：问不到时接着显示它，并标上时间
     var codexPayload: String?
@@ -176,7 +177,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         try? FileManager.default.createDirectory(at: eventsDir, withIntermediateDirectories: true)   // 钩子 / 插件的事件记录写在这里（见 App+Log）
         appLog("启动 \(currentVersion)，macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         setupStatusItem()
-        registerHotKey()
+        if !isolatedRun { registerHotKey() }
         setupFamilyPets()
         startServices()
         saveAppearanceConfiguration()
@@ -192,7 +193,10 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         if let saved = windowDefaults.array(forKey: "origin") as? [Double], saved.count == 2 {
             origin = NSPoint(x: saved[0], y: saved[1])
         } else if let screen = NSScreen.main?.visibleFrame {
-            origin = NSPoint(x: screen.maxX - size.width - 40 - CGFloat(Self.slot(of: petId)) * (size.width + 10), y: screen.minY + 100)
+            let columns = max(1, Int((screen.width - 80) / (size.width + 10)))
+            let slot = Self.slot(of: petId)
+            origin = NSPoint(x: max(screen.minX, screen.maxX - size.width - 40 - CGFloat(slot % columns) * (size.width + 10)),
+                             y: min(screen.maxY - size.height, screen.minY + 40 + CGFloat(slot / columns) * (size.height + 10)))
         }
         panel = NSPanel(contentRect: NSRect(origin: origin, size: size),
                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

@@ -223,3 +223,97 @@ test('observed process exit closes its turn against delayed work', () => {
   state = P.processExited(state, Object.keys(state.records)[0], 'process-a', 1001)
   assert.equal(update(state, { turnId: 'a', sequence: 2, ts: 1002, observedAt: 1002 }).result, 'ignored')
 })
+
+const observed = (producerId, sequence, at, event, status, turnId) => snapshot({
+  family: 'claude', source: 'claude-code', client: 'tui', producerId, sequence,
+  ts: at, observedAt: at, event, status, turnId, pose: status === 'Success' ? 'happy' : 'thinking',
+})
+const ingestObserved = (state, ...args) => P.ingest(state, observed(...args), claude)
+test('hook and mod share one session without retiring each other or reviving ended work', () => {
+  let state = {}
+  for (const row of [['hook', 1, 1000, 'UserPromptSubmit', 'Thinking', 'hook-a'], ['claude-mod-1', 1, 1001, 'UserPromptSubmit', 'Thinking', 'mod-a'], ['hook', 2, 1002, 'Stop', 'Success', 'hook-a']]) {
+    const result = ingestObserved(state, ...row); state = result.state; assert.equal(result.result, 'applied')
+  }
+  const late = ingestObserved(state, 'claude-mod-1', 2, 1003, 'PostToolUse', 'Thinking', 'mod-a')
+  assert.equal(late.result, 'ignored'); assert.equal(view(late.state, 1003, claude).status, 'Success')
+  const next = ingestObserved(late.state, 'hook', 3, 1004, 'UserPromptSubmit', 'Thinking', 'hook-b')
+  assert.equal(next.result, 'applied'); state = next.state
+  const oldEnd = ingestObserved(state, 'claude-mod-1', 3, 1005, 'Stop', 'Success', 'mod-a')
+  assert.equal(oldEnd.result, 'ignored'); assert.equal(view(oldEnd.state, 1005, claude).status, 'Thinking')
+  const join = ingestObserved(oldEnd.state, 'claude-mod-1', 4, 1006, 'UserPromptSubmit', 'Thinking', 'mod-b')
+  assert.equal(join.result, 'applied'); assert.equal(view(join.state, 1006, claude).count, 1)
+  const finish = ingestObserved(join.state, 'claude-mod-1', 5, 1007, 'Stop', 'Success', 'mod-b')
+  assert.equal(finish.result, 'applied'); assert.equal(view(finish.state, 1007, claude).status, 'Success')
+})
+test('file enumeration order cannot revive a stale observer or duplicate a session', () => {
+  const ended = ingestObserved({}, 'hook', 2, 1002, 'Stop', 'Success', 'hook-a').state
+  const old = ingestObserved(ended, 'claude-mod-1', 1, 1000, 'UserPromptSubmit', 'Thinking', 'mod-a')
+  assert.equal(old.result, 'ignored')
+  const late = ingestObserved(old.state, 'claude-mod-1', 2, 1003, 'PostToolUse', 'Thinking', 'mod-a')
+  assert.equal(late.result, 'ignored'); assert.equal(view(late.state, 1003, claude).status, 'Success')
+  assert.equal(Object.keys(P.sessions(late.state, 1003, claude)).length, 1)
+})
+test('mod process restart retires only its channel and preserves hook evidence', () => {
+  let state = ingestObserved({}, 'hook', 1, 1000, 'UserPromptSubmit', 'Thinking', 'hook-a').state
+  state = ingestObserved(state, 'claude-mod-1', 1, 1001, 'UserPromptSubmit', 'Thinking', 'mod-a').state
+  state = ingestObserved(state, 'claude-mod-2', 1, 1002, 'PreInvocation', 'Thinking', 'mod-a').state
+  assert.equal(ingestObserved(state, 'claude-mod-1', 100, 1003, 'Stop', 'Success', 'mod-a').result, 'ignored')
+  assert.equal(ingestObserved(state, 'hook', 2, 1004, 'Stop', 'Success', 'hook-a').result, 'applied')
+  // Hook's next prompt remains live even though the mod has restarted independently.
+  const next = ingestObserved(state, 'hook', 3, 1005, 'UserPromptSubmit', 'Thinking', 'hook-b')
+  assert.equal(next.result, 'applied')
+})
+test('a first observed Stop closes work in the other channel without shared turn IDs', () => {
+  let state = ingestObserved({}, 'claude-mod-1', 1, 1000, 'PreInvocation', 'Thinking', 'mod-a').state
+  state = ingestObserved(state, 'hook', 1, 1001, 'Stop', 'Success', 'native-uuid').state
+  const late = ingestObserved(state, 'claude-mod-1', 2, 1002, 'PreToolUse', 'Tool Running', 'mod-a')
+  assert.equal(late.result, 'ignored'); assert.equal(view(late.state, 1002, claude).status, 'Success')
+})
+test('turn and channel bookkeeping remains immutable', () => {
+  const state = ingestObserved({}, 'hook', 1, 1000, 'UserPromptSubmit', 'Thinking', 'hook-a').state
+  const frozen = JSON.stringify(state)
+  ingestObserved(state, 'claude-mod-1', 1, 1001, 'Stop', 'Success', 'mod-a')
+  assert.equal(JSON.stringify(state), frozen)
+})
+test('a newly observed or restarted mod cannot reopen hook completion without a new prompt', () => {
+  let state = ingestObserved({}, 'hook', 1, 1000, 'Stop', 'Success', 'hook-a').state
+  const first = ingestObserved(state, 'claude-mod-1', 1, 1001, 'PreInvocation', 'Thinking', 'mod-a')
+  assert.equal(first.result, 'ignored')
+  const restarted = ingestObserved(first.state, 'claude-mod-2', 1, 1002, 'PreInvocation', 'Thinking', 'mod-b')
+  assert.equal(restarted.result, 'ignored')
+  const fresh = ingestObserved(restarted.state, 'claude-mod-2', 2, 1003, 'UserPromptSubmit', 'Thinking', 'mod-c')
+  assert.equal(fresh.result, 'applied')
+})
+
+test('ordered fresh prompt recovers a clock rollback while closed turns stay rejected', () => {
+  let state = ingestObserved({}, 'hook', 1, 10000, 'UserPromptSubmit', 'Thinking', 'hook-a').state
+  state = ingestObserved(state, 'hook', 2, 10001, 'Stop', 'Success', 'hook-a').state
+  const fresh = ingestObserved(state, 'hook', 3, 100, 'UserPromptSubmit', 'Thinking', 'hook-b')
+  assert.equal(fresh.result, 'applied'); state = fresh.state
+  assert.equal(view(state, 100, claude).status, 'Thinking')
+  assert.equal(ingestObserved(state, 'hook', 4, 101, 'PreToolUse', 'Tool Running', 'hook-a').result, 'ignored')
+  assert.equal(ingestObserved(state, 'hook', 5, 102, 'UserPromptSubmit', 'Thinking', 'hook-a').result, 'ignored')
+  const ended = ingestObserved(state, 'hook', 6, 103, 'Stop', 'Success', 'hook-b')
+  assert.equal(ended.result, 'applied'); assert.equal(view(ended.state, 103, claude).status, 'Success')
+})
+test('clock rollback requires monotonic sequence and a new prompt or turn proof', () => {
+  const state = ingestObserved({}, 'hook', 10, 10000, 'UserPromptSubmit', 'Thinking', 'hook-a').state
+  for (const args of [['hook', 9, 100, 'UserPromptSubmit', 'Thinking', 'hook-b'], ['hook', 10, 100, 'UserPromptSubmit', 'Thinking', 'hook-b'], ['hook', 11, 100, 'PostToolUse', 'Thinking', 'hook-a'], ['claude-mod-1', 11, 100, 'UserPromptSubmit', 'Thinking', 'mod-b']])
+    assert.equal(ingestObserved(state, ...args).result, 'ignored')
+  assert.equal(ingestObserved(state, 'hook', 11, 100, 'PreInvocation', 'Thinking', 'hook-b').result, 'applied')
+})
+test('a different observer must prove a fresh turn after time-domain recovery', () => {
+  let state = ingestObserved({}, 'hook', 1, 10000, 'UserPromptSubmit', 'Thinking', 'hook-a').state
+  state = ingestObserved(state, 'claude-mod-1', 1, 10001, 'UserPromptSubmit', 'Thinking', 'mod-a').state
+  state = ingestObserved(state, 'hook', 2, 100, 'UserPromptSubmit', 'Thinking', 'hook-b').state
+  assert.equal(ingestObserved(state, 'claude-mod-1', 2, 10002, 'PostToolUse', 'Thinking', 'mod-a').result, 'ignored')
+  const joined = ingestObserved(state, 'claude-mod-1', 3, 101, 'UserPromptSubmit', 'Thinking', 'mod-b')
+  assert.equal(joined.result, 'applied'); assert.equal(view(joined.state, 101, claude).count, 1)
+  assert.equal(ingestObserved(joined.state, 'hook', 3, 102, 'PostToolUse', 'Thinking', 'hook-b').result, 'applied')
+})
+test('explicit ingestion clock rejects future files before they can poison ordering', () => {
+  for (const now of [100, NaN, Infinity, -1]) assert.equal(P.ingest({}, observed('hook', 1, 10000, 'UserPromptSubmit', 'Thinking', 'hook-a'), { ...claude, now }).result, 'invalid')
+  const state = P.ingest({}, observed('hook', 1, 100, 'UserPromptSubmit', 'Thinking', 'hook-a'), { ...claude, now: 100 }).state
+  const future = P.ingest(state, observed('claude-mod-1', 10, 10000, 'UserPromptSubmit', 'Thinking', 'mod-a'), { ...claude, now: 101 })
+  assert.equal(future.result, 'invalid'); assert.equal(view(future.state, 101, claude).status, 'Thinking')
+})

@@ -5,7 +5,10 @@ extension App {
     /// One process-wide request and timer, including when both GPT renderers are enabled.
     func updateSharedResets() {
         if owner !== self { owner.updateSharedResets(); return }
-        guard familiesMode else { return }
+        guard familiesMode else {
+            resetGeneration += 1; resetTimer?.invalidate(); resetTimer = nil; resetTask?.cancel(); resetTask = nil
+            js("setCodexResets(\(codexResets))"); return
+        }
         let on = codexResets && activePets.contains { $0.ready }
         for pet in allPets { pet.js("setCodexResets(\(on), true)") }
         if on {

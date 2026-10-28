@@ -32,7 +32,7 @@ function makeEnv(html) {
   const context = vm.createContext({ SessionStatus: require('../app/web/session-status.js'), Date: FakeDate, setTimeout: t.set, clearTimeout: t.clear,
     setInterval: t.set, clearInterval: t.clear, console })
   const setup = `
-    let charId = 'gpt', pose = 'idle', poseSince = Date.now(), currentUrl = '', swappedAt = 0
+    let familyMode = null, familyClient = null; let charId = 'gpt', pose = 'idle', poseSince = Date.now(), currentUrl = '', swappedAt = 0
     let shownAt = 0, pending = null, thinkTimer = null, revertTimer = null, stuckTimer = null
     let characterGeneration = 0, characterTimer = null, characterTarget = null
     let lastActive = Date.now(), egg = null, multi = null, shakingUntil = 0, updatingNow = false, farewellLine = null

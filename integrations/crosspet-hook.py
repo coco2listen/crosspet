@@ -461,6 +461,7 @@ def detect_client(host):
 
 
 client, client_reason = detect_client(source_host)
+received_at = time.time()
 
 
 # 从门禁到状态、模型路由、会话卡片写完共用一把宿主锁。只锁 turn_gate 会留下
@@ -980,6 +981,97 @@ if session_id and (pose or name == "SessionEnd"):
                          "client": client, "clientReason": client_reason})
     except Exception:
         pass
+
+def write_family_snapshot():
+    if not (app_data / "multi-pets-enabled").exists():
+        return
+    family = {"claude": "claude", "gpt": "gpt", "deepseek": "deepseek"}.get(source_host)
+    if not family or not session_id or not (pose or name == "SessionEnd"):
+        return
+    source = {"claude": "claude-code", "gpt": "codex", "deepseek": "deepseek-harness"}[source_host]
+    original = str(event.get("hook_event_name") or arg_event)
+    if name == "SessionEnd":
+        status = "Offline"
+    elif original == "Interrupt" or pose == "surprised":
+        status = "Idle"
+    elif original == "PostCompact" and str(event.get("trigger", "")).lower() == "manual":
+        status = "Idle"
+    elif pose == "oops":
+        status = "Error"
+    elif pose == "asking":
+        status = "Waiting Permission" if original == "PermissionRequest" or (original == "Notification" and str(event.get("notification_type", "")).lower() in ("permission_prompt", "toolpermission")) else "Waiting Input"
+    elif pose in ("happy", "proud"):
+        status = "Success"
+    elif name == "SessionStart":
+        status = "Idle"
+    elif name in ("PreToolUse", "BeforeTool"):
+        status = "Tool Running"
+    else:
+        status = "Thinking"
+    folder = state_dir / "families" / family
+    folder.mkdir(parents=True, exist_ok=True)
+    key = source + "-" + client + "-" + hashlib.sha256(session_id.encode()).hexdigest()[:20]
+    target = folder / (key + ".json")
+    # Hooks are concurrent subprocesses: serialize only this session and reject
+    # an invocation that arrived before the already-published snapshot.
+    with open(folder / ("." + key + ".lock"), "a+b") as lock:
+        if os.name != "nt":
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        else:
+            import msvcrt
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            try:
+                previous = json.loads(target.read_text())
+            except Exception:
+                previous = {}
+            if previous.get("observedAt", 0) > received_at:
+                return
+            # 无 turn_id 的标准钩子也不能在明确结束后把旧工具回调当新任务。
+            starts = original in ("UserPromptSubmit", "BeforeAgent", "SessionStart")
+            if previous.get("closed") and not starts and name != "SessionEnd":
+                return
+            eid = str(event.get("event_id") or "")
+            if eid and eid == previous.get("eventId"):
+                return
+            tool_count = int(previous.get("toolCount", 0))
+            if original in ("UserPromptSubmit", "BeforeAgent"):
+                tool_count = 0
+            elif name in ("PreToolUse", "BeforeTool"):
+                tool_count += 1
+            family_pose = pose or "idle"
+            if status == "Success":
+                family_pose = "proud" if tool_count >= BIG_JOB_TOOLS else "happy"
+            snapshot = dict(schema=1, family=family, source=source, client=client, clientReason=client_reason,
+                            sessionId=session_id, model=str(event.get("model") or previous.get("model") or ""),
+                            status=status, pose=family_pose, event=name, tool=tool, toolCount=tool_count,
+                            ts=received_at, observedAt=received_at,
+                            sequence=int(previous.get("sequence", 0)) + 1,
+                            turnId=effective_turn, eventId=eid, producerId="hook")
+            snapshot["closed"] = name in TURN_END or name == "AfterAgent"
+            result = previous.get("lastResult")
+            if status in ("Success", "Error") and name in ("Stop", "AfterAgent"):
+                result = dict(status=status, pose=family_pose, event=name, ts=received_at)
+            if isinstance(result, dict) and 0 <= received_at - float(result.get("ts", 0)) <= 10:
+                snapshot["lastResult"] = result
+            # Carry the same animation fields as legacy state, but only from
+            # this source/session snapshot; model-routed legacy files may belong to another AI.
+            if status == "Thinking" and previous.get("event") == "PreToolUse" and received_at - float(previous.get("ts", 0)) < 3:
+                snapshot.update(after=previous.get("pose"), afterTs=previous.get("ts"), tool=previous.get("tool", ""))
+            tmp = folder / ("." + key + "." + str(os.getpid()) + ".tmp")
+            tmp.write_text(json.dumps(snapshot))
+            tmp.replace(target)
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
+try:
+    write_family_snapshot()
+except Exception:
+    pass  # Observability must never block the client's hooks.
+
 
 ledger("shown", f"{character} {pose}") if pose else ledger("dropped", "unknown-event")
 

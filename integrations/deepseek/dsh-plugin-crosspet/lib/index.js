@@ -8,8 +8,9 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { lowThresholds, summarize } from "./balance.js";
 
 // 运行于明确的桌面包才标为 desktop；测试、CLI 或未知宿主不冒充桌面端。
@@ -68,12 +69,54 @@ export function apply(ctx, config = {}) {
   const lowBalance = lowThresholds(config.lowBalance);  // 按币种的门槛，见 balance.js
   let tools = 0;
   const origin = { host: ID, ...clientOf(process.execPath) };
+  const dataDir = config.dataDir || process.env.CROSSPET_DATA_DIR || (process.platform === "win32" ? data : join(homedir(), "Library/Application Support/CrossPet"));
+  const multiEnabled = () => existsSync(join(dataDir, "multi-pets-enabled"));
+  const producerId = `dsh-${process.pid}-${Date.now()}`;
+  const familyTurns = new Map(), familyWrites = new Map();
+  function familyState(session, pose, event, model) {
+    if (!multiEnabled() || !session.id) return;
+    const sid = session.id;
+    const prior = familyWrites.get(sid) || Promise.resolve();
+    const pending = prior.catch(() => {}).then(async () => {
+      if (!multiEnabled()) return;
+      let turn = familyTurns.get(sid) || { generation: 0, closed: false, sequence: 0 };
+      if (event === "UserPromptSubmit") turn = { ...turn, generation: turn.generation + 1, closed: false };
+      else if (turn.closed) return;
+      if (event === "Stop") turn.closed = true;
+      turn.sequence++; familyTurns.set(sid, turn);
+      const now = Date.now() / 1000;
+      const status = pose === "asking" ? (event === "PreToolUse" ? "Waiting Input" : "Waiting Permission") : pose === "oops" ? "Error"
+        : event === "Stop" ? (pose === "surprised" || pose === "idle" ? "Idle" : "Success")
+        : event === "PreToolUse" ? "Tool Running" : "Thinking";
+      const snapshot = { schema: 1, family: ID, source: "deepseek-harness", ...origin, sessionId: sid,
+        model, status, pose, event, tool: "", ts: now, observedAt: now, producerId,
+        sequence: turn.sequence, turnId: `${producerId}:${turn.generation}` };
+      const key = createHash("sha256").update(sid).digest("hex").slice(0, 20);
+      await mkdir(join(dir, "families", ID), { recursive: true });
+      await writeJson(`families/${ID}/deepseek-harness-${origin.client}-${key}.json`, snapshot);
+    }).catch(() => {});
+    familyWrites.set(sid, pending);
+    pending.finally(() => { if (familyWrites.get(sid) === pending) familyWrites.delete(sid); });
+  }
+  let clientQuotaWrite = Promise.resolve();
+  function clientQuota(quota) {
+    if (!multiEnabled()) return;
+    clientQuotaWrite = clientQuotaWrite.catch(() => {}).then(async () => {
+      if (!multiEnabled()) return;
+      await mkdir(join(dir, "clients"), { recursive: true });
+      await writeJson(`clients/${ID}-${origin.client}-quota.json`, {
+        schema: 1, family: ID, source: "deepseek-harness", ...origin, quota, ts: Date.now() / 1000,
+      });
+    }).catch(() => {});
+  }
+
 
   let writes = 0;
   async function writeJson(file, data) {
     await mkdir(dir, { recursive: true });
     // 临时文件名每次不同：几次写入同时发生时（比如启动时查两次余额、连续的工作事件）不会互相抢同一个文件
-    const tmp = join(dir, `.${file}.${process.pid}.${++writes}`);
+    const target = join(dir, file);
+    const tmp = join(dirname(target), `.${basename(file)}.${process.pid}.${++writes}`);
     await writeFile(tmp, JSON.stringify(data));
     await rename(tmp, join(dir, file));
   }
@@ -231,6 +274,9 @@ export function apply(ctx, config = {}) {
     try { const r = session.requestContext?.(); if (r?.provider || r?.model) who = characterFor(r.provider, r.model, custom); } catch {}
     const now = Date.now() / 1000;
     for (const [c, map] of Object.entries(perChar)) if (c !== who && map[session.id]) { delete map[session.id]; sessionsDirty.add(c); }   // 中途换了模型
+    let model = "";
+    try { model = session.requestContext?.()?.model || ""; } catch {}
+    familyState(session, pose, ev, model);
     const map = (perChar[who] ??= {});
     map[session.id] = { pose, event: ev, ts: now, ...origin, session: session.id };
     for (const [k, v] of Object.entries(map)) if (now - v.ts > 600) delete map[k];
@@ -301,6 +347,7 @@ export function apply(ctx, config = {}) {
   const OFFICIAL = new Set(["deepseek-account", "deepseek-official"]);
   let lastQuota = null;
   function publishQuota() {
+    clientQuota(provider && !OFFICIAL.has(provider) ? null : lastQuota);
     if (provider && !OFFICIAL.has(provider)) return writeJson(`${ID}-quota.json`, { text: "", low: false, ...origin }).catch(() => {});
     if (lastQuota) return writeJson(`${ID}-quota.json`, { ...lastQuota, ...origin }).catch(() => {});
     return Promise.resolve();

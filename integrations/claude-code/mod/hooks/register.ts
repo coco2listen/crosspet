@@ -53,6 +53,7 @@ function characterForModel(model: string): string | undefined {
 }
 // 会话 id → 正在演的角色（还没看到模型时是 Claude）
 const actors = new Map<string, string>()
+const models = new Map<string, string>()
 async function charactersDir($: EngineInterface): Promise<string> {
   const local = await $.env.get('LOCALAPPDATA')
   return local ? `${local}\\CrossPet\\characters` : `${await $.env.get('HOME')}/Library/Application Support/CrossPet/characters`
@@ -62,6 +63,7 @@ async function noteModel($: EngineInterface, model: string): Promise<void> {
   const sid = await $.session.id()
   let who = characterForModel(model) ?? characterForUrl((await $.env.get('ANTHROPIC_BASE_URL')) ?? '') ?? ID
   if (who !== ID && !(await $.fs.exists(`${await charactersDir($)}/${who}/character.json`))) who = ID   // 这个角色没装
+  models.set(sid, model)
   const old = actors.get(sid)
   if (old === who) return
   actors.set(sid, who)
@@ -104,13 +106,80 @@ async function writeLedger($: EngineInterface, ev: string, tool: string, sid: st
   } catch {}   // 记录写不了不能影响 Claude
 }
 
+// 只有用户启用多宠才发布旁路文件。关闭时继续原有单宠读写路径。
+async function multiEnabled($: EngineInterface): Promise<boolean> {
+  const custom = await $.env.get('CROSSPET_DATA_DIR')
+  const local = await $.env.get('LOCALAPPDATA')
+  const data = custom || (local ? `${local}\\CrossPet` : `${await $.env.get('HOME')}/Library/Application Support/CrossPet`)
+  return $.fs.exists(`${data}/multi-pets-enabled`)
+}
+const familySequences = new Map<string, number>()
+const familyTools = new Map<string, number>()
+const familyWrites = new Map<string, Promise<void>>()
+const familyTurns = new Map<string, { generation: number; closed: boolean }>()
+const producerId = `claude-mod-${Date.now()}-${Math.random().toString(36).slice(2)}`
+function familyToken(sid: string) { return familyTurns.get(sid)?.generation ?? 0 }
+async function atomicClientWrite($: EngineInterface, target: string, value: unknown) {
+  // 引擎没有文件 rename API；仅用受支持的进程接口发布，失败不影响客户端任务。
+  if (await $.env.get('LOCALAPPDATA')) return
+  const directory = target.slice(0, target.lastIndexOf('/'))
+  const made = await $.process.run(['/bin/mkdir', '-p', directory], { timeoutMs: 5000 })
+  if (made.exitCode !== 0) return
+  const temp = `${target}.${producerId}.${Math.random().toString(36).slice(2)}.tmp`
+  await $.fs.write(temp, JSON.stringify(value))
+  await $.process.run(['/bin/mv', '-f', temp, target], { timeoutMs: 5000 })
+}
+async function familyState($: EngineInterface, sid: string, state: State) {
+  if (!sid || !await multiEnabled($)) return
+  const previous = familyWrites.get(sid) ?? Promise.resolve()
+  const pending = previous.catch(() => {}).then(async () => {
+    if (!await multiEnabled($)) return
+    let turn = familyTurns.get(sid) ?? { generation: 0, closed: false }
+    if (state.event === 'UserPromptSubmit' || state.event === 'SessionStart') {
+      turn = { generation: turn.generation + 1, closed: false }; familyTurns.set(sid, turn); familyTools.set(sid, 0)
+    } else if (turn.closed || (state.turnId !== undefined && state.turnId !== turn.generation)) return
+    if (state.event === 'PreToolUse') familyTools.set(sid, (familyTools.get(sid) ?? 0) + 1)
+    if (state.event === 'Stop') { turn.closed = true; familyTurns.set(sid, turn) }
+    const origin = await clientMetadata($)
+    const sequence = (familySequences.get(sid) ?? 0) + 1; familySequences.set(sid, sequence)
+    const status = state.completion === 'compact' ? 'Idle' : state.pose === 'oops' ? 'Error' : state.pose === 'surprised' ? 'Idle'
+      : state.pose === 'asking' ? (state.event === 'Notification' ? 'Waiting Permission' : 'Waiting Input')
+      : state.event === 'SessionStart' ? 'Idle' : state.event === 'Stop' ? 'Success'
+      : state.event === 'PreToolUse' ? 'Tool Running' : 'Thinking'
+    const snapshot = { schema: 1, family: ID, source: 'claude-code', ...origin, sessionId: sid,
+      model: models.get(sid) ?? '', status, pose: status === 'Success' ? ((familyTools.get(sid) ?? 0) >= BIG_JOB_TOOLS ? 'proud' : 'happy') : state.pose, event: state.event, tool: state.tool,
+      ts: state.ts, observedAt: state.ts, sequence, producerId, turnId: `${producerId}:${turn.generation}` }
+    // Engine VM 不提供 crypto；UUID 编码为完整 UTF-16，过长时拒绝而不截断碰撞。
+    const key = sid.split('').map(c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('')
+    if (key.length > 180) return
+    await atomicClientWrite($, `${await stateDir($)}/families/claude/claude-code-${origin.client}-mod-${key}.json`, snapshot)
+  }).catch(() => {})
+  familyWrites.set(sid, pending); await pending
+  if (familyWrites.get(sid) === pending) familyWrites.delete(sid)
+}
+const clientQuotaWrites = new Map<string, Promise<void>>()
+async function publishClientQuota($: EngineInterface, quota: ReturnType<typeof quotaOf>) {
+  if (!await multiEnabled($)) return
+  const origin = await clientMetadata($)
+  const target = `${await stateDir($)}/clients/claude-${origin.client}-quota.json`
+  const previous = clientQuotaWrites.get(target) ?? Promise.resolve()
+  const pending = previous.catch(() => {}).then(async () => {
+    if (!await multiEnabled($)) return
+    await atomicClientWrite($, target,
+      { schema: 1, family: ID, source: 'claude-code', ...origin, quota, ts: Date.now() / 1000 })
+  }).catch(() => {})
+  clientQuotaWrites.set(target, pending); await pending
+  if (clientQuotaWrites.get(target) === pending) clientQuotaWrites.delete(target)
+}
+
 // 写状态；同时按会话另外记一份 <角色>-sessions.json（{会话id: {pose, event, ts}}），
 // 同时开着好几个会话在干活时，桌宠演「手忙脚乱」，每个会话一张小卡片
-type State = { pose: string; event: string; tool: string; ts: number }
-async function setState($: EngineInterface, state: State): Promise<void> {
+type State = { pose: string; event: string; tool: string; ts: number; turnId?: number; completion?: string }
+async function setState($: EngineInterface, state: State, sessionId?: string): Promise<void> {
   await write($, 'seen-claude-mod', String(Math.floor(Date.now() / 1000))).catch(() => {})   // 心跳：最近一次收到消息
-  let sid = ''
-  try { sid = await $.session.id() } catch {}
+  let sid = sessionId ?? ''
+  if (!sid) { try { sid = await $.session.id() } catch {} }
+  await familyState($, sid, state)
   const who = actors.get(sid) ?? ID
   const origin = { host: ID, session: sid, ...await clientMetadata($) }
   await write($, `${who}-state.json`, { ...state, ...origin })
@@ -212,6 +281,7 @@ export const register: Register = on => {
     await setState($, { pose: 'idle', event: 'SessionStart', tool: '', ts: Date.now() / 1000 })
     const usage = await $.session.usage()
     const q = quotaOf(usage.rateLimits)
+    await publishClientQuota($, q)
     if (q) await write($, `${ID}-quota.json`, { ...q, host: ID, ...await clientMetadata($) })
     return next(e)
   })
@@ -232,11 +302,12 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    const sid = await $.session.id(), turnId = familyToken(sid)
     tools += 1
-    await setState($, { pose: poseForTool(e.tool), event: 'PreToolUse', tool: e.tool, ts: Date.now() / 1000 })
+    await setState($, { pose: poseForTool(e.tool), event: 'PreToolUse', tool: e.tool, ts: Date.now() / 1000, turnId }, sid)
     const r = await next(e)
     const failed = 'deny' in r && r.deny !== undefined ? true : r.isError === true
-    await setState($, { pose: failed ? 'oops' : 'thinking', event: 'PostToolUse', tool: e.tool, ts: Date.now() / 1000 })
+    await setState($, { pose: failed ? 'oops' : 'thinking', event: 'PostToolUse', tool: e.tool, ts: Date.now() / 1000, turnId }, sid)
     return r
   })
 
@@ -265,13 +336,14 @@ export const register: Register = on => {
     const r = await next(e)
     // 自动压缩发生在一轮中途，压完接着干活；手动 /compact 压完这一轮就结束了，后面不会再有 Stop，得自己收尾
     if (shown) await setState($, e.trigger === 'manual'
-      ? { pose: 'happy', event: 'Stop', tool: '', ts: Date.now() / 1000 }
+      ? { pose: 'happy', event: 'Stop', tool: '', ts: Date.now() / 1000, completion: 'compact' }
       : { pose: 'thinking', event: 'PostCompact', tool: '', ts: Date.now() / 1000 })
     return r
   })
 
   on('session.measure', async ($, e, next) => {
     const q = quotaOf(e.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })))
+    await publishClientQuota($, q)
     if (q) await write($, `${ID}-quota.json`, { ...q, host: ID, ...await clientMetadata($) })
     return next(e)
   })
